@@ -193,12 +193,43 @@ class MarkupAIContentChecker {
   async fetchStyleGuides(): Promise<StyleGuideOption[]> {
     try {
       const styleGuides = await this.client.styleGuides.listStyleGuides();
-      const customGuides: StyleGuideOption[] = styleGuides.map((guide) => ({
-        id: guide.id,
-        name: guide.name,
-        isBuiltIn: false,
-      }));
-      return [...BUILT_IN_STYLE_GUIDES, ...customGuides];
+      
+      // Known built-in style guide names (case-insensitive matching)
+      const builtInNames = new Set([
+        "ap style guide", "ap", "associated press",
+        "chicago manual of style", "chicago", "cmos",
+        "microsoft style guide", "microsoft", "microsoft writing style guide"
+      ]);
+      
+      const customGuides: StyleGuideOption[] = [];
+      const builtInGuides: StyleGuideOption[] = [];
+      
+      for (const guide of styleGuides) {
+        const nameLower = guide.name.toLowerCase();
+        const idLower = guide.id.toLowerCase();
+        
+        // Check if this is a built-in style guide by name or ID
+        const isBuiltIn = builtInNames.has(nameLower) || 
+                          builtInNames.has(idLower) ||
+                          nameLower.includes("ap style") ||
+                          nameLower.includes("chicago") ||
+                          nameLower.includes("microsoft");
+        
+        const styleGuideOption: StyleGuideOption = {
+          id: guide.id,
+          name: guide.name,
+          isBuiltIn: isBuiltIn,
+        };
+        
+        if (isBuiltIn) {
+          builtInGuides.push(styleGuideOption);
+        } else {
+          customGuides.push(styleGuideOption);
+        }
+      }
+      
+      // Custom/server guides at top, built-in guides at bottom
+      return [...customGuides, ...builtInGuides];
     } catch (error) {
       console.error("MarkupAI: Error fetching style guides", error);
       return BUILT_IN_STYLE_GUIDES;
@@ -366,6 +397,7 @@ let isEnabled = true;
 let cachedStyleGuides: StyleGuideOption[] = [...BUILT_IN_STYLE_GUIDES];
 let isCheckingDocument: Map<string, boolean> = new Map();
 let isApplyingFix = false; // Flag to prevent re-checking when applying fixes
+let disabledCategories: Set<string> = new Set(); // Categories that are disabled by user
 
 // ============================================================================
 // Utility Functions
@@ -562,6 +594,11 @@ function updateDiagnostics(
   const diagnostics: vscode.Diagnostic[] = [];
 
   for (const issue of issues) {
+    // Skip issues from disabled categories
+    if (issue.category && disabledCategories.has(issue.category.toLowerCase())) {
+      continue;
+    }
+
     const startPos = indexToPosition(document, issue.startIndex);
     const endPos = indexToPosition(document, issue.endIndex);
     const range = new vscode.Range(startPos, endPos);
@@ -586,6 +623,20 @@ function updateDiagnostics(
   }
 
   diagnosticCollection.set(document.uri, diagnostics);
+}
+
+// Filter out diagnostics from disabled categories across all documents
+function filterDiagnosticsByDisabledCategories(): void {
+  diagnosticCollection.forEach((uri, diagnostics) => {
+    const filteredDiagnostics = diagnostics.filter((diagnostic) => {
+      const category = (diagnostic as any).markupaiCategory;
+      if (category && disabledCategories.has(category.toLowerCase())) {
+        return false;
+      }
+      return true;
+    });
+    diagnosticCollection.set(uri, filteredDiagnostics);
+  });
 }
 
 function clearDiagnostics(document: vscode.TextDocument): void {
@@ -743,7 +794,7 @@ class MarkupAICodeActionProvider implements vscode.CodeActionProvider {
 
       const suggestion = (diagnostic as any).markupaiSuggestion;
       const originalText = (diagnostic as any).markupaiOriginalText;
-      const issueType = (diagnostic as any).markupaiIssueType;
+      const category = (diagnostic as any).markupaiCategory;
 
       if (suggestion && suggestion !== originalText) {
         // Create quick fix action using applyFix command to handle overlapping issues
@@ -777,17 +828,20 @@ class MarkupAICodeActionProvider implements vscode.CodeActionProvider {
 
         actions.push(action);
 
-        // Add "Disable MarkupAI" action
-        const ignoreAction = new vscode.CodeAction(
-          `Disable MarkupAI Issues`,
-          vscode.CodeActionKind.QuickFix
-        );
-        ignoreAction.command = {
-          command: "markupai.disableIssues",
-          title: "Disable MarkupAI",
-          arguments: [],
-        };
-        actions.push(ignoreAction);
+        // Add category-specific disable action
+        if (category) {
+          const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+          const disableCategoryAction = new vscode.CodeAction(
+            `Disable ${categoryLabel} Issues`,
+            vscode.CodeActionKind.QuickFix
+          );
+          disableCategoryAction.command = {
+            command: "markupai.disableCategory",
+            title: `Disable ${categoryLabel} Issues`,
+            arguments: [category],
+          };
+          actions.push(disableCategoryAction);
+        }
       }
     }
 
@@ -830,25 +884,10 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
           markdown.appendMarkdown(`### ${categoryEmoji} ${categoryLabel}\n\n`);
         }
 
-        // 2. Subcategory below
-        if (subcategory) {
-          const subcategoryLabel =
-            subcategory.charAt(0).toUpperCase() + subcategory.slice(1);
-          markdown.appendMarkdown(`**Subcategory:** ${subcategoryLabel}\n\n`);
-        }
-
-        // 3. Severity (colors match underline: high=red, medium=yellow, low=blue)
-        if (severity) {
-          const severityEmoji = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🔵';
-          const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
-          markdown.appendMarkdown(`**Severity:** ${severityEmoji} ${severityLabel}\n\n`);
-        }
-
-        // 4. Suggestion (only show the suggested text)
+        // 2. Suggestion and Apply button immediately after category (visible without scrolling)
         if (suggestion && suggestion !== originalText) {
           markdown.appendMarkdown(`**Suggestion:** \`${suggestion}\`\n\n`);
 
-          // 5. Apply button
           const args = encodeURIComponent(
             JSON.stringify({
               uri: document.uri.toString(),
@@ -866,8 +905,22 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
             })
           );
           markdown.appendMarkdown(
-            `[Apply Fix](command:markupai.applyFix?${args})`
+            `[Apply Fix](command:markupai.applyFix?${args})\n\n`
           );
+        }
+
+        // 3. Subcategory
+        if (subcategory) {
+          const subcategoryLabel =
+            subcategory.charAt(0).toUpperCase() + subcategory.slice(1);
+          markdown.appendMarkdown(`**Subcategory:** ${subcategoryLabel}\n\n`);
+        }
+
+        // 4. Severity (colors match underline: high=red, medium=yellow, low=blue)
+        if (severity) {
+          const severityEmoji = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🔵';
+          const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+          markdown.appendMarkdown(`**Severity:** ${severityEmoji} ${severityLabel}\n\n`);
         }
 
         return new vscode.Hover(markdown, diagnostic.range);
@@ -944,20 +997,57 @@ async function selectStyleGuide(): Promise<void> {
   }
 
   // Refresh style guides before showing picker
-  await refreshStyleGuides();
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Loading style guides...",
+      cancellable: false,
+    },
+    async () => {
+      await refreshStyleGuides();
+    }
+  );
 
   const currentStyleGuide = getStyleGuide();
-  const items: vscode.QuickPickItem[] = cachedStyleGuides.map((guide) => ({
-    label: guide.name,
-    description: guide.isBuiltIn ? "Built-in" : "Custom",
-    detail: guide.id,
-    picked: guide.id === currentStyleGuide,
-  }));
+  const customGuides = cachedStyleGuides.filter((g) => !g.isBuiltIn);
+  const builtInGuides = cachedStyleGuides.filter((g) => g.isBuiltIn);
+
+  const items: vscode.QuickPickItem[] = [];
+
+  // Add custom/server guides first
+  if (customGuides.length > 0) {
+    items.push({
+      label: "Your Style Guides",
+      kind: vscode.QuickPickItemKind.Separator,
+    });
+    for (const guide of customGuides) {
+      items.push({
+        label: guide.name,
+        description: guide.id === currentStyleGuide ? "✓ Selected" : "",
+        detail: guide.id,
+      });
+    }
+  }
+
+  // Add built-in guides at the bottom
+  items.push({
+    label: "Built-in Style Guides",
+    kind: vscode.QuickPickItemKind.Separator,
+  });
+  for (const guide of builtInGuides) {
+    items.push({
+      label: guide.name,
+      description: guide.id === currentStyleGuide ? "✓ Selected" : "",
+      detail: guide.id,
+    });
+  }
 
   const selected = await vscode.window.showQuickPick(items, {
     title: "Select Style Guide",
     placeHolder: "Choose a style guide for content checking",
     canPickMany: false,
+    matchOnDescription: true,
+    matchOnDetail: true,
   });
 
   if (selected && selected.detail) {
@@ -1038,57 +1128,56 @@ async function showScoresDialog(): Promise<void> {
   const otherCount =
     issues.length - grammarCount - consistencyCount - terminologyCount;
 
+  // Get current settings for display
+  const currentStyleGuide = getStyleGuide();
+  const currentDialect = getDialect();
+  const dialectLabel = DIALECTS.find(d => d.value === currentDialect)?.label || currentDialect;
+  const styleGuideLabel = cachedStyleGuides.find(g => g.id === currentStyleGuide)?.name || currentStyleGuide;
+
   const items: vscode.QuickPickItem[] = [
     {
-      label: `${getScoreEmoji(scores.overall)} Overall Score: ${
-        scores.overall
-      }`,
-      description: `${issues.length} total issues found`,
-      detail: "Combined quality score from all categories",
+      label: "Scores",
+      kind: vscode.QuickPickItemKind.Separator,
     },
     {
-      label: "─".repeat(40),
-      kind: vscode.QuickPickItemKind.Separator,
+      label: `${getScoreEmoji(scores.overall)} Overall: ${scores.overall}`,
+      description: `${issues.length} issues`,
     },
     {
       label: `${getScoreEmoji(scores.grammar)} Grammar: ${scores.grammar}`,
       description: `${grammarCount} issues`,
-      detail: "Grammar, spelling, and punctuation issues",
     },
     {
-      label: `${getScoreEmoji(scores.consistency)} Consistency: ${
-        scores.consistency
-      }`,
+      label: `${getScoreEmoji(scores.consistency)} Consistency: ${scores.consistency}`,
       description: `${consistencyCount} issues`,
-      detail: "Style and formatting consistency",
     },
     {
-      label: `${getScoreEmoji(scores.terminology)} Terminology: ${
-        scores.terminology
-      }`,
+      label: `${getScoreEmoji(scores.terminology)} Terminology: ${scores.terminology}`,
       description: `${terminologyCount} issues`,
-      detail: "Term usage and vocabulary",
     },
   ];
 
   if (otherCount > 0) {
     items.push({
-      label: `📋 Other Issues`,
-      description: `${otherCount} issues`,
-      detail: "Clarity, tone, and other suggestions",
+      label: `📋 Other: ${otherCount} issues`,
     });
   }
 
   // Add configuration options
   items.push(
-    { label: "─".repeat(40), kind: vscode.QuickPickItemKind.Separator },
     {
-      label: "$(gear) Configure Style Guide...",
-      detail: `Current: ${getStyleGuide()}`,
+      label: "Settings",
+      kind: vscode.QuickPickItemKind.Separator,
     },
     {
-      label: "$(globe) Configure Dialect...",
-      detail: `Current: ${getDialect()}`,
+      label: "$(gear) Style Guide",
+      description: styleGuideLabel,
+      detail: "Click to change style guide",
+    },
+    {
+      label: "$(globe) Dialect",
+      description: dialectLabel,
+      detail: "Click to change dialect",
     }
   );
 
@@ -1364,6 +1453,13 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.commands.executeCommand("setContext", "markupai.enabled", isEnabled);
   vscode.commands.executeCommand("setContext", "markupai.showAllFiles", true);
 
+  // Fetch style guides from server on startup (async, don't block activation)
+  if (hasApiToken()) {
+    refreshStyleGuides().catch((error) => {
+      console.error("MarkupAI: Failed to fetch style guides on startup", error);
+    });
+  }
+
   // Initialize Findings TreeView
   findingsTreeDataProvider = new FindingsTreeDataProvider();
   const findingsTreeView = vscode.window.createTreeView("markupai.findings", {
@@ -1521,6 +1617,58 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.disableIssues", async () => {
       await setMarkupAIEnabled(false);
+    })
+  );
+
+  // Command to disable a specific category
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.disableCategory", async (category: string) => {
+      if (!category) {
+        return;
+      }
+      
+      disabledCategories.add(category.toLowerCase());
+      const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+      vscode.window.showInformationMessage(`MarkupAI: ${categoryLabel} issues are now hidden. Use "MarkupAI: Enable Category" to show them again.`);
+      
+      // Remove diagnostics for this category from all documents
+      filterDiagnosticsByDisabledCategories();
+      findingsTreeDataProvider?.refresh();
+    })
+  );
+
+  // Command to enable a specific category
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.enableCategory", async () => {
+      if (disabledCategories.size === 0) {
+        vscode.window.showInformationMessage("MarkupAI: All categories are already enabled.");
+        return;
+      }
+
+      const categories = Array.from(disabledCategories).map(cat => ({
+        label: cat.charAt(0).toUpperCase() + cat.slice(1),
+        value: cat
+      }));
+
+      const selected = await vscode.window.showQuickPick(
+        categories.map(c => c.label),
+        {
+          placeHolder: "Select a category to enable",
+          canPickMany: true
+        }
+      );
+
+      if (selected && selected.length > 0) {
+        for (const label of selected) {
+          const cat = categories.find(c => c.label === label);
+          if (cat) {
+            disabledCategories.delete(cat.value);
+          }
+        }
+        
+        vscode.window.showInformationMessage(`MarkupAI: Enabled ${selected.join(", ")} issues. Run "MarkupAI - Check Content" to see them.`);
+        findingsTreeDataProvider?.refresh();
+      }
     })
   );
 

@@ -57,6 +57,16 @@
         "category": "MarkupAI"
       },
       {
+        "command": "markupai.disableCategory",
+        "title": "MarkupAI - Disable Category",
+        "category": "MarkupAI"
+      },
+      {
+        "command": "markupai.enableCategory",
+        "title": "MarkupAI - Enable Category",
+        "category": "MarkupAI"
+      },
+      {
         "command": "markupai.showScores",
         "title": "Show Content Scores",
         "category": "MarkupAI"
@@ -183,6 +193,14 @@
         {
           "command": "markupai.disableIssues",
           "when": "markupai.enabled"
+        },
+        {
+          "command": "markupai.enableCategory",
+          "when": "markupai.enabled"
+        },
+        {
+          "command": "markupai.disableCategory",
+          "when": "false"
         },
         {
           "command": "markupai.showScores",
