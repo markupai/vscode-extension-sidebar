@@ -529,6 +529,9 @@ async function checkDocument(
     if (findingsTreeDataProvider) {
       findingsTreeDataProvider.refresh();
     }
+
+    // Show completion notification for all checks
+    showCheckCompleteNotification(result.scores, result.issues.length);
   } catch (error: any) {
     console.error("MarkupAI: Error checking content", error);
 
@@ -663,6 +666,39 @@ function updateStatusBarChecking(): void {
   statusBarItem.text = "$(sync~spin) MarkupAI: Checking...";
   statusBarItem.tooltip = "Checking content...";
   statusBarItem.show();
+}
+
+async function showCheckCompleteNotification(scores: ContentScores, issueCount: number): Promise<void> {
+  // Build a visually appealing notification message
+  const scoreEmoji = getScoreEmoji(scores.overall);
+  
+  // Determine overall message based on score
+  let statusMessage: string;
+  if (scores.overall >= 90) {
+    statusMessage = "Excellent!";
+  } else if (scores.overall >= 70) {
+    statusMessage = "Good";
+  } else if (scores.overall >= 50) {
+    statusMessage = "Needs Improvement";
+  } else {
+    statusMessage = "Needs Attention";
+  }
+
+  const message = `${scoreEmoji} MarkupAI Check Complete — ${statusMessage} | ` +
+    `Score: ${scores.overall} | ` +
+    `${issueCount} issue${issueCount !== 1 ? 's' : ''} found`;
+
+  const action = await vscode.window.showInformationMessage(
+    message,
+    "View Details",
+    "Show Findings"
+  );
+
+  if (action === "View Details") {
+    vscode.commands.executeCommand("markupai.showScores");
+  } else if (action === "Show Findings") {
+    vscode.commands.executeCommand("markupai.findings.focus");
+  }
 }
 
 function scheduleCheck(document: vscode.TextDocument): void {
