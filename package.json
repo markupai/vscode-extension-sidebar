@@ -16,6 +16,25 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "markupai-panel",
+          "title": "MarkupAI",
+          "icon": "$(checklist)"
+        }
+      ]
+    },
+    "views": {
+      "markupai-panel": [
+        {
+          "id": "markupai.findings",
+          "name": "Findings",
+          "type": "tree",
+          "contextualTitle": "MarkupAI Findings"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "markupai.checkContent",
@@ -56,9 +75,82 @@
         "command": "markupai.selectDialect",
         "title": "Select Dialect",
         "category": "MarkupAI"
+      },
+      {
+        "command": "markupai.goToIssue",
+        "title": "Go to Issue",
+        "category": "MarkupAI"
+      },
+      {
+        "command": "markupai.filterBySeverity",
+        "title": "Filter by Severity",
+        "category": "MarkupAI",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "markupai.filterByCategory",
+        "title": "Filter by Category",
+        "category": "MarkupAI",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "markupai.clearFilters",
+        "title": "Clear Filters",
+        "category": "MarkupAI",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "markupai.refreshFindings",
+        "title": "Refresh Findings",
+        "category": "MarkupAI",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "markupai.showAllFindings",
+        "title": "Show All Files",
+        "category": "MarkupAI",
+        "icon": "$(files)"
+      },
+      {
+        "command": "markupai.showCurrentFileFindings",
+        "title": "Show Current File Only",
+        "category": "MarkupAI",
+        "icon": "$(file)"
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "markupai.refreshFindings",
+          "when": "view == markupai.findings",
+          "group": "navigation@1"
+        },
+        {
+          "command": "markupai.filterBySeverity",
+          "when": "view == markupai.findings",
+          "group": "navigation@2"
+        },
+        {
+          "command": "markupai.filterByCategory",
+          "when": "view == markupai.findings",
+          "group": "navigation@3"
+        },
+        {
+          "command": "markupai.clearFilters",
+          "when": "view == markupai.findings",
+          "group": "navigation@4"
+        },
+        {
+          "command": "markupai.showAllFindings",
+          "when": "view == markupai.findings && !markupai.showAllFiles",
+          "group": "navigation@5"
+        },
+        {
+          "command": "markupai.showCurrentFileFindings",
+          "when": "view == markupai.findings && markupai.showAllFiles",
+          "group": "navigation@5"
+        }
+      ],
       "editor/context": [
         {
           "command": "markupai.checkContent",
@@ -104,6 +196,10 @@
         },
         {
           "command": "markupai.selectDialect"
+        },
+        {
+          "command": "markupai.goToIssue",
+          "when": "false"
         }
       ]
     },

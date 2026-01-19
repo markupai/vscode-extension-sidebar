@@ -524,6 +524,11 @@ async function checkDocument(
 
     // Update status bar
     updateStatusBar(result.scores);
+
+    // Refresh findings panel
+    if (findingsTreeDataProvider) {
+      findingsTreeDataProvider.refresh();
+    }
   } catch (error: any) {
     console.error("MarkupAI: Error checking content", error);
 
@@ -583,12 +588,18 @@ function clearDiagnostics(document: vscode.TextDocument): void {
   diagnosticCollection.delete(document.uri);
   documentIssues.delete(document.uri.toString());
   documentScores.delete(document.uri.toString());
+  if (findingsTreeDataProvider) {
+    findingsTreeDataProvider.refresh();
+  }
 }
 
 function clearAllDiagnostics(): void {
   diagnosticCollection.clear();
   documentIssues.clear();
   documentScores.clear();
+  if (findingsTreeDataProvider) {
+    findingsTreeDataProvider.refresh();
+  }
 }
 
 async function setMarkupAIEnabled(enabled: boolean): Promise<void> {
@@ -1058,6 +1069,240 @@ async function showScoresDialog(): Promise<void> {
 }
 
 // ============================================================================
+// Findings Panel - TreeView for Issues
+// ============================================================================
+
+interface FindingTreeItem {
+  type: 'file' | 'issue';
+  uri?: vscode.Uri;
+  issue?: ContentIssue;
+  label: string;
+  children?: FindingTreeItem[];
+}
+
+class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeItem> {
+  private _onDidChangeTreeData: vscode.EventEmitter<FindingTreeItem | undefined | null | void> = 
+    new vscode.EventEmitter<FindingTreeItem | undefined | null | void>();
+  readonly onDidChangeTreeData: vscode.Event<FindingTreeItem | undefined | null | void> = 
+    this._onDidChangeTreeData.event;
+
+  private severityFilter: string | null = null;
+  private categoryFilter: string | null = null;
+  private showAllFiles: boolean = true;
+
+  refresh(): void {
+    this._onDidChangeTreeData.fire();
+  }
+
+  setSeverityFilter(severity: string | null): void {
+    this.severityFilter = severity;
+    this.refresh();
+  }
+
+  setCategoryFilter(category: string | null): void {
+    this.categoryFilter = category;
+    this.refresh();
+  }
+
+  clearFilters(): void {
+    this.severityFilter = null;
+    this.categoryFilter = null;
+    this.refresh();
+  }
+
+  setShowAllFiles(showAll: boolean): void {
+    this.showAllFiles = showAll;
+    vscode.commands.executeCommand('setContext', 'markupai.showAllFiles', showAll);
+    this.refresh();
+  }
+
+  getFilters(): { severity: string | null; category: string | null } {
+    return { severity: this.severityFilter, category: this.categoryFilter };
+  }
+
+  getTreeItem(element: FindingTreeItem): vscode.TreeItem {
+    if (element.type === 'file') {
+      const treeItem = new vscode.TreeItem(
+        element.label,
+        vscode.TreeItemCollapsibleState.Expanded
+      );
+      treeItem.iconPath = vscode.ThemeIcon.File;
+      treeItem.resourceUri = element.uri;
+      treeItem.description = `${element.children?.length || 0} issues`;
+      return treeItem;
+    } else {
+      // Issue item
+      const issue = element.issue!;
+      const treeItem = new vscode.TreeItem(
+        element.label,
+        vscode.TreeItemCollapsibleState.None
+      );
+      
+      // Set icon based on severity with colors matching SonarQube style
+      if (issue.severity === 'high') {
+        treeItem.iconPath = new vscode.ThemeIcon(
+          'circle-filled',
+          new vscode.ThemeColor('charts.red')
+        );
+      } else if (issue.severity === 'medium') {
+        treeItem.iconPath = new vscode.ThemeIcon(
+          'circle-filled',
+          new vscode.ThemeColor('charts.yellow')
+        );
+      } else {
+        treeItem.iconPath = new vscode.ThemeIcon(
+          'circle-filled',
+          new vscode.ThemeColor('charts.blue')
+        );
+      }
+      
+      // Add description with category
+      treeItem.description = issue.category || issue.type;
+      
+      // Add tooltip
+      treeItem.tooltip = new vscode.MarkdownString();
+      treeItem.tooltip.appendMarkdown(`**${issue.category || issue.type}**\n\n`);
+      treeItem.tooltip.appendMarkdown(`${issue.message}\n\n`);
+      if (issue.suggestion) {
+        treeItem.tooltip.appendMarkdown(`**Suggestion:** \`${issue.suggestion}\``);
+      }
+      
+      // Command to navigate to issue
+      treeItem.command = {
+        command: 'markupai.goToIssue',
+        title: 'Go to Issue',
+        arguments: [element.uri, issue]
+      };
+      
+      return treeItem;
+    }
+  }
+
+  getChildren(element?: FindingTreeItem): Thenable<FindingTreeItem[]> {
+    if (!element) {
+      // Root level - return files with issues
+      return Promise.resolve(this.getFileItems());
+    } else if (element.type === 'file') {
+      // Return issues for this file
+      return Promise.resolve(element.children || []);
+    }
+    return Promise.resolve([]);
+  }
+
+  private getFileItems(): FindingTreeItem[] {
+    const items: FindingTreeItem[] = [];
+    const activeEditor = vscode.window.activeTextEditor;
+    
+    // Get all document URIs that have issues
+    const urisToShow: string[] = [];
+    
+    if (this.showAllFiles) {
+      // Show all files with issues
+      documentIssues.forEach((_, uriString) => {
+        urisToShow.push(uriString);
+      });
+    } else {
+      // Show only current file
+      if (activeEditor) {
+        const currentUri = activeEditor.document.uri.toString();
+        if (documentIssues.has(currentUri)) {
+          urisToShow.push(currentUri);
+        }
+      }
+    }
+
+    for (const uriString of urisToShow) {
+      const uri = vscode.Uri.parse(uriString);
+      let issues = documentIssues.get(uriString) || [];
+      
+      // Apply filters
+      if (this.severityFilter) {
+        issues = issues.filter(i => i.severity === this.severityFilter);
+      }
+      if (this.categoryFilter) {
+        issues = issues.filter(i => i.category === this.categoryFilter || i.type === this.categoryFilter);
+      }
+      
+      if (issues.length === 0) { continue; }
+
+      // Get document to convert indices to line numbers
+      const document = vscode.workspace.textDocuments.find(d => d.uri.toString() === uriString);
+      
+      const issueItems: FindingTreeItem[] = issues.map(issue => {
+        let lineInfo = '';
+        if (document) {
+          const position = document.positionAt(issue.startIndex);
+          lineInfo = `Ln ${position.line + 1}`;
+        }
+        
+        // Truncate message if too long
+        let label = issue.message;
+        if (label.length > 80) {
+          label = label.substring(0, 77) + '...';
+        }
+        
+        return {
+          type: 'issue' as const,
+          uri: uri,
+          issue: issue,
+          label: `${label} (${lineInfo})`
+        };
+      });
+
+      // Get just the filename for display
+      const fileName = uri.path.split('/').pop() || uri.path;
+      
+      items.push({
+        type: 'file',
+        uri: uri,
+        label: fileName,
+        children: issueItems
+      });
+    }
+
+    return items;
+  }
+
+  getTotalIssueCount(): number {
+    let count = 0;
+    documentIssues.forEach(issues => {
+      let filtered = issues;
+      if (this.severityFilter) {
+        filtered = filtered.filter(i => i.severity === this.severityFilter);
+      }
+      if (this.categoryFilter) {
+        filtered = filtered.filter(i => i.category === this.categoryFilter || i.type === this.categoryFilter);
+      }
+      count += filtered.length;
+    });
+    return count;
+  }
+
+  getAvailableCategories(): string[] {
+    const categories = new Set<string>();
+    documentIssues.forEach(issues => {
+      issues.forEach(issue => {
+        if (issue.category) { categories.add(issue.category); }
+        categories.add(issue.type);
+      });
+    });
+    return Array.from(categories);
+  }
+
+  getAvailableSeverities(): string[] {
+    const severities = new Set<string>();
+    documentIssues.forEach(issues => {
+      issues.forEach(issue => {
+        severities.add(issue.severity);
+      });
+    });
+    return Array.from(severities);
+  }
+}
+
+let findingsTreeDataProvider: FindingsTreeDataProvider;
+
+// ============================================================================
 // Activation
 // ============================================================================
 
@@ -1080,6 +1325,119 @@ export function activate(context: vscode.ExtensionContext) {
   // Set initial enabled state from config and update context for menu visibility
   isEnabled = getConfig().get("enabled", true);
   vscode.commands.executeCommand("setContext", "markupai.enabled", isEnabled);
+  vscode.commands.executeCommand("setContext", "markupai.showAllFiles", true);
+
+  // Initialize Findings TreeView
+  findingsTreeDataProvider = new FindingsTreeDataProvider();
+  const findingsTreeView = vscode.window.createTreeView("markupai.findings", {
+    treeDataProvider: findingsTreeDataProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(findingsTreeView);
+
+  // Update tree view title with issue count
+  const updateTreeViewTitle = () => {
+    const count = findingsTreeDataProvider.getTotalIssueCount();
+    const filters = findingsTreeDataProvider.getFilters();
+    let title = `Findings (${count})`;
+    if (filters.severity || filters.category) {
+      const activeFilters = [filters.severity, filters.category].filter(Boolean).join(", ");
+      title += ` - Filtered: ${activeFilters}`;
+    }
+    findingsTreeView.title = title;
+  };
+
+  // Register findings panel commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.goToIssue", async (uri: vscode.Uri, issue: ContentIssue) => {
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document);
+      const startPos = document.positionAt(issue.startIndex);
+      const endPos = document.positionAt(issue.endIndex);
+      const range = new vscode.Range(startPos, endPos);
+      editor.selection = new vscode.Selection(range.start, range.end);
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.refreshFindings", () => {
+      findingsTreeDataProvider.refresh();
+      updateTreeViewTitle();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.filterBySeverity", async () => {
+      const severities = findingsTreeDataProvider.getAvailableSeverities();
+      if (severities.length === 0) {
+        vscode.window.showInformationMessage("No issues found to filter");
+        return;
+      }
+      
+      const items = severities.map(s => ({
+        label: s === 'high' ? '🔴 High' : s === 'medium' ? '🟡 Medium' : '🔵 Low',
+        value: s
+      }));
+      items.unshift({ label: 'All Severities', value: '' });
+      
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select severity to filter'
+      });
+      
+      if (selected) {
+        findingsTreeDataProvider.setSeverityFilter(selected.value || null);
+        updateTreeViewTitle();
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.filterByCategory", async () => {
+      const categories = findingsTreeDataProvider.getAvailableCategories();
+      if (categories.length === 0) {
+        vscode.window.showInformationMessage("No issues found to filter");
+        return;
+      }
+      
+      const items = categories.map(c => ({
+        label: c.charAt(0).toUpperCase() + c.slice(1),
+        value: c
+      }));
+      items.unshift({ label: 'All Categories', value: '' });
+      
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select category to filter'
+      });
+      
+      if (selected) {
+        findingsTreeDataProvider.setCategoryFilter(selected.value || null);
+        updateTreeViewTitle();
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.clearFilters", () => {
+      findingsTreeDataProvider.clearFilters();
+      updateTreeViewTitle();
+      vscode.window.showInformationMessage("Filters cleared");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.showAllFindings", () => {
+      findingsTreeDataProvider.setShowAllFiles(true);
+      updateTreeViewTitle();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markupai.showCurrentFileFindings", () => {
+      findingsTreeDataProvider.setShowAllFiles(false);
+      updateTreeViewTitle();
+    })
+  );
 
   // Register Code Actions Provider (for quick fixes)
   context.subscriptions.push(
