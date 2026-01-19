@@ -62,11 +62,127 @@ const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 60; // 2 minutes max
 
 // ============================================================================
+// Text Offset Mapper - Handles Unicode encoding differences
+// ============================================================================
+
+/**
+ * Maps between different text offset types:
+ * - Unicode code points (what many APIs return)
+ * - UTF-8 byte offsets (file-based APIs)
+ * - UTF-16 code units (JavaScript string indices)
+ * 
+ * Emojis and characters outside BMP cause differences:
+ * - 😀 (U+1F600): 1 code point, 4 UTF-8 bytes, 2 UTF-16 code units
+ */
+class TextOffsetMapper {
+  private text: string;
+  private codePointToStringIndex: number[] = [];
+  private byteToStringIndex: number[] = [];
+
+  constructor(text: string) {
+    this.text = text;
+    this.buildMappings();
+  }
+
+  private buildMappings(): void {
+    const encoder = new TextEncoder();
+    let stringIndex = 0;
+    let byteOffset = 0;
+    let codePointIndex = 0;
+
+    // Build code point to string index mapping
+    this.codePointToStringIndex.push(0);
+    this.byteToStringIndex.push(0);
+
+    for (const char of this.text) {
+      // Each iteration gives us one code point (handles surrogate pairs)
+      const charLength = char.length; // 1 for BMP, 2 for surrogate pairs
+      const charBytes = encoder.encode(char).length;
+
+      stringIndex += charLength;
+      byteOffset += charBytes;
+      codePointIndex++;
+
+      this.codePointToStringIndex.push(stringIndex);
+      
+      // Fill in byte offsets for each byte
+      for (let i = 1; i <= charBytes; i++) {
+        this.byteToStringIndex.push(stringIndex);
+      }
+    }
+  }
+
+  /**
+   * Convert a Unicode code point offset to a JavaScript string index.
+   * Use this if the API counts characters as code points.
+   */
+  codePointOffsetToStringIndex(codePointOffset: number): number {
+    if (codePointOffset < 0) { return 0; }
+    if (codePointOffset >= this.codePointToStringIndex.length) {
+      return this.text.length;
+    }
+    return this.codePointToStringIndex[codePointOffset];
+  }
+
+  /**
+   * Convert a UTF-8 byte offset to a JavaScript string index.
+   * Use this if the API counts positions as byte offsets.
+   */
+  byteOffsetToStringIndex(byteOffset: number): number {
+    if (byteOffset < 0) { return 0; }
+    if (byteOffset >= this.byteToStringIndex.length) {
+      return this.text.length;
+    }
+    return this.byteToStringIndex[byteOffset];
+  }
+
+  /**
+   * Find the actual position of text in the string, searching from a start index.
+   * Returns the start and end string indices.
+   */
+  findTextPosition(searchText: string, startFromIndex: number): { start: number; end: number } | null {
+    const foundIndex = this.text.indexOf(searchText, startFromIndex);
+    if (foundIndex === -1) { return null; }
+    return {
+      start: foundIndex,
+      end: foundIndex + searchText.length
+    };
+  }
+
+  /**
+   * Given an approximate start index and the original text, find the exact position.
+   * This is useful when the offset might be slightly off due to encoding differences.
+   */
+  findNearbyText(searchText: string, approximateIndex: number, searchRadius: number = 20): { start: number; end: number } | null {
+    // Try exact position first
+    const exactStart = Math.max(0, approximateIndex);
+    if (this.text.substring(exactStart, exactStart + searchText.length) === searchText) {
+      return { start: exactStart, end: exactStart + searchText.length };
+    }
+
+    // Search nearby
+    const searchStart = Math.max(0, approximateIndex - searchRadius);
+    const searchEnd = Math.min(this.text.length, approximateIndex + searchRadius + searchText.length);
+    const searchArea = this.text.substring(searchStart, searchEnd);
+    
+    const foundInArea = searchArea.indexOf(searchText);
+    if (foundInArea !== -1) {
+      const actualStart = searchStart + foundInArea;
+      return { start: actualStart, end: actualStart + searchText.length };
+    }
+
+    return null;
+  }
+}
+
+// ============================================================================
 // MarkupAI API Client
 // ============================================================================
 
 class MarkupAIContentChecker {
   private client: MarkupAIClient;
+  private originalText: string = "";
+  private offsetMapper: TextOffsetMapper | null = null;
 
   constructor(apiToken: string) {
     this.client = new MarkupAIClient({
@@ -94,6 +210,10 @@ class MarkupAIContentChecker {
     dialect: MarkupAI.Dialects,
     styleGuide: string
   ): Promise<CheckResult> {
+    // Store original text and create offset mapper for Unicode handling
+    this.originalText = text;
+    this.offsetMapper = new TextOffsetMapper(text);
+    
     // Create a Blob from the text content
     const blob = new Blob([text], { type: "text/plain" });
     const file = new File([blob], "content.txt", { type: "text/plain" });
@@ -151,10 +271,44 @@ class MarkupAIContentChecker {
       const issue = apiIssues[i];
       const issueType = this.mapCategoryToType(issue.category);
 
+      // Convert API offset to JavaScript string index
+      // The API likely returns Unicode code point offsets, which differ from 
+      // JavaScript's UTF-16 code unit indices for emojis and other non-BMP characters
+      let startIndex: number;
+      let endIndex: number;
+
+      if (this.offsetMapper) {
+        // First, try to convert the code point offset
+        const convertedStart = this.offsetMapper.codePointOffsetToStringIndex(
+          issue.position.start_index
+        );
+        
+        // Then, verify by finding the actual text in the document
+        // This handles any remaining edge cases and ensures accuracy
+        const position = this.offsetMapper.findNearbyText(
+          issue.original,
+          convertedStart,
+          50 // Search within 50 characters if not exact match
+        );
+        
+        if (position) {
+          startIndex = position.start;
+          endIndex = position.end;
+        } else {
+          // Fallback: use the converted offset and calculate end from original length
+          startIndex = convertedStart;
+          endIndex = startIndex + issue.original.length;
+        }
+      } else {
+        // No mapper available, use raw values (fallback)
+        startIndex = issue.position.start_index;
+        endIndex = issue.position.start_index + issue.original.length;
+      }
+
       issues.push({
         id: `issue-${i}`,
-        startIndex: issue.position.start_index,
-        endIndex: issue.position.start_index + issue.original.length,
+        startIndex: startIndex,
+        endIndex: endIndex,
         type: issueType,
         category: issue.category,
         subcategory:
