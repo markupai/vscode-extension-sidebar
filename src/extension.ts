@@ -571,6 +571,7 @@ function updateDiagnostics(
     (diagnostic as any).markupaiIssueType = issue.type;
     (diagnostic as any).markupaiCategory = issue.category;
     (diagnostic as any).markupaiSubcategory = issue.subcategory;
+    (diagnostic as any).markupaiSeverity = issue.severity;
 
     diagnostics.push(diagnostic);
   }
@@ -767,6 +768,7 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
         const originalText = (diagnostic as any).markupaiOriginalText;
         const category = (diagnostic as any).markupaiCategory;
         const subcategory = (diagnostic as any).markupaiSubcategory;
+        const severity = (diagnostic as any).markupaiSeverity;
 
         const markdown = new vscode.MarkdownString();
         markdown.isTrusted = true;
@@ -787,11 +789,18 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
           markdown.appendMarkdown(`**Subcategory:** ${subcategoryLabel}\n\n`);
         }
 
-        // 3. Suggestion (only show the suggested text)
+        // 3. Severity (colors match underline: high=red, medium=yellow, low=blue)
+        if (severity) {
+          const severityEmoji = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🔵';
+          const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+          markdown.appendMarkdown(`**Severity:** ${severityEmoji} ${severityLabel}\n\n`);
+        }
+
+        // 4. Suggestion (only show the suggested text)
         if (suggestion && suggestion !== originalText) {
           markdown.appendMarkdown(`**Suggestion:** \`${suggestion}\`\n\n`);
 
-          // 4. Apply button
+          // 5. Apply button
           const args = encodeURIComponent(
             JSON.stringify({
               uri: document.uri.toString(),
