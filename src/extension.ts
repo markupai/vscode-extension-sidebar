@@ -365,6 +365,7 @@ let checkDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 let isEnabled = true;
 let cachedStyleGuides: StyleGuideOption[] = [...BUILT_IN_STYLE_GUIDES];
 let isCheckingDocument: Map<string, boolean> = new Map();
+let isApplyingFix = false; // Flag to prevent re-checking when applying fixes
 
 // ============================================================================
 // Utility Functions
@@ -1580,9 +1581,17 @@ export function activate(context: vscode.ExtensionContext) {
         diagnosticCollection.set(uri, updatedDiagnostics);
       }
 
+      // Set flag to prevent re-checking when applying fix
+      isApplyingFix = true;
+      
       const edit = new vscode.WorkspaceEdit();
       edit.replace(uri, range, parsedArgs.suggestion);
       await vscode.workspace.applyEdit(edit);
+      
+      // Reset flag after a short delay to allow the document change event to fire
+      setTimeout(() => {
+        isApplyingFix = false;
+      }, 100);
     })
   );
 
@@ -1597,7 +1606,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (getConfig().get("checkOnChange", true)) {
+      // Skip re-checking if we're applying a fix from the extension
+      // This prevents unnecessary API calls when user accepts suggestions
+      if (isApplyingFix) {
+        return;
+      }
+      
+      // Only auto-check on change if the setting is enabled (default: false)
+      if (getConfig().get("checkOnChange", false)) {
         scheduleCheck(event.document);
       }
     })

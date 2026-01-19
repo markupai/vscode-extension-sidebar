@@ -244,8 +244,8 @@
         },
         "markupai.checkOnChange": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically check content when the document changes"
+          "default": false,
+          "description": "Automatically re-check content when the document changes. Enable this for real-time score updates while editing. Disable to save API calls (recommended)."
         },
         "markupai.checkDelay": {
           "type": "number",
