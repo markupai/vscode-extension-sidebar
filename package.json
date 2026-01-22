@@ -56,6 +56,13 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "markupai.folderScanner",
+        "contents": "No folder open.\n\nOpen a folder to scan documents for writing issues.\n\n[Open Folder](command:vscode.openFolder)\n\nOr select a specific folder:\n[Select Folder](command:markupai.selectFolder)",
+        "when": "workspaceFolderCount == 0"
+      }
+    ],
     "commands": [
       {
         "command": "markupai.checkContent",
@@ -150,7 +157,7 @@
       },
       {
         "command": "markupai.selectFolder",
-        "title": "Select Folder to Scan",
+        "title": "Change Folder",
         "category": "MarkupAI",
         "icon": "$(folder-opened)"
       },

@@ -1676,7 +1676,46 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
 
   private rootFolder: vscode.Uri | null = null;
   private selectedFiles: Set<string> = new Set();
-  private fileExtensions = ['.md', '.txt', '.rst', '.adoc', '.tex'];
+  private fileExtensions = ['.md', '.txt', '.dita', '.html', '.htm', '.xml'];
+
+  constructor() {
+    // Auto-initialize with workspace folder if available
+    this.initializeFromWorkspace();
+  }
+
+  /**
+   * Initialize the folder scanner with the current VS Code workspace folder.
+   * Works with both formal workspaces and folders opened via File > Open Folder.
+   */
+  initializeFromWorkspace(): boolean {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    console.log("MarkupAI: Workspace folders:", workspaceFolders);
+    
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      // Use the first workspace folder
+      this.rootFolder = workspaceFolders[0].uri;
+      this.selectedFiles.clear();
+      console.log("MarkupAI: Folder scanner initialized with:", this.rootFolder.fsPath);
+      return true;
+    }
+    
+    console.log("MarkupAI: No workspace folder found");
+    return false;
+  }
+
+  /**
+   * Check if a folder is loaded
+   */
+  hasFolder(): boolean {
+    return this.rootFolder !== null;
+  }
+
+  /**
+   * Get the current root folder
+   */
+  getRootFolder(): vscode.Uri | null {
+    return this.rootFolder;
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -1789,7 +1828,11 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
 
   async getChildren(element?: FolderScannerItem): Promise<FolderScannerItem[]> {
     if (!this.rootFolder) {
-      return [];
+      // No workspace folder - try to initialize again in case workspace changed
+      this.initializeFromWorkspace();
+      if (!this.rootFolder) {
+        return [];
+      }
     }
 
     if (!element) {
@@ -1984,6 +2027,23 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(folderScannerTreeView);
 
+  // Refresh the folder scanner after a short delay to ensure workspace is ready
+  // This handles the case where the extension activates before workspace is fully loaded
+  setTimeout(() => {
+    if (!folderScannerTreeDataProvider.hasFolder()) {
+      folderScannerTreeDataProvider.initializeFromWorkspace();
+    }
+    folderScannerTreeDataProvider.refresh();
+  }, 500);
+
+  // Listen for workspace folder changes and refresh folder scanner
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      folderScannerTreeDataProvider.initializeFromWorkspace();
+      folderScannerTreeDataProvider.refresh();
+    })
+  );
+
   // Update tree view title with issue count
   const updateTreeViewTitle = () => {
     const count = findingsTreeDataProvider.getTotalIssueCount();
@@ -2094,18 +2154,22 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.selectFolder", async () => {
+      const currentFolder = folderScannerTreeDataProvider.getRootFolder();
+      
       const folderUri = await vscode.window.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
         openLabel: "Select Folder to Scan",
-        title: "Select folder containing documents to check"
+        title: "Select a different folder to scan (current workspace is auto-loaded)",
+        defaultUri: currentFolder || undefined
       });
 
       if (folderUri && folderUri[0]) {
         folderScannerTreeDataProvider.setRootFolder(folderUri[0]);
+        const folderName = folderUri[0].path.split('/').pop() || folderUri[0].fsPath;
         vscode.window.showInformationMessage(
-          `Folder selected: ${folderUri[0].fsPath}\nSelect files and click "Check Selected Files"`
+          `MarkupAI: Now scanning "${folderName}"`
         );
       }
     })
