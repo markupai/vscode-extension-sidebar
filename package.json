@@ -5,6 +5,7 @@
   "version": "0.0.1",
   "publisher": "markupai",
   "license": "Apache-2.0",
+  "icon": "assets/Markup AI Icon 128.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/markupai/vscode-extension"
