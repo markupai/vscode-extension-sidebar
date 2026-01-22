@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { MarkupAIClient, MarkupAI } from "@markupai/api";
+import { DiffMatchPatch, Diff, DiffOp } from "diff-match-patch-ts";
 
 // ============================================================================
 // Types and Interfaces
@@ -60,6 +61,122 @@ const BUILT_IN_STYLE_GUIDES: StyleGuideOption[] = [
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 60; // 2 minutes max
+
+// ============================================================================
+// Offset Translator - Uses diff-match-patch to map positions between text versions
+// ============================================================================
+
+/**
+ * Translates character positions from an old version of text to a new version
+ * using the diff-match-patch algorithm. This handles insertions, deletions,
+ * and modifications accurately.
+ */
+class OffsetTranslator {
+  private diffs: Diff[];
+  private dmp: DiffMatchPatch;
+
+  constructor(oldText: string, newText: string) {
+    this.dmp = new DiffMatchPatch();
+    this.diffs = this.dmp.diff_main(oldText, newText);
+    // Cleanup for efficiency
+    this.dmp.diff_cleanupEfficiency(this.diffs);
+  }
+
+  /**
+   * Translate a position from the old text to the corresponding position in the new text.
+   * Uses diff_xIndex internally which computes the equivalent location.
+   * 
+   * @param oldPosition - Character index in the old text
+   * @returns The corresponding character index in the new text
+   */
+  translatePosition(oldPosition: number): number {
+    return this.diff_xIndex(this.diffs, oldPosition);
+  }
+
+  /**
+   * Translate a range (start, end) from old text to new text positions.
+   * 
+   * @param startIndex - Start position in old text
+   * @param endIndex - End position in old text
+   * @returns Object with translated start and end positions, or null if the range was deleted
+   */
+  translateRange(startIndex: number, endIndex: number): { start: number; end: number } | null {
+    const newStart = this.translatePosition(startIndex);
+    const newEnd = this.translatePosition(endIndex);
+    
+    // If start >= end after translation, the content was deleted
+    if (newStart >= newEnd) {
+      return null;
+    }
+    
+    return { start: newStart, end: newEnd };
+  }
+
+  /**
+   * Implementation of diff_xIndex - maps a character position in text1 to 
+   * the equivalent position in text2 based on the diff array.
+   * 
+   * This is based on the Google diff-match-patch algorithm.
+   * 
+   * @param diffs - Array of diff tuples
+   * @param loc - Location in text1 to translate
+   * @returns Location in text2
+   */
+  private diff_xIndex(diffs: Diff[], loc: number): number {
+    let chars1 = 0;
+    let chars2 = 0;
+    let lastChars1 = 0;
+    let lastChars2 = 0;
+
+    for (const diff of diffs) {
+      const op = diff[0];
+      const text = diff[1];
+
+      if (op !== DiffOp.Insert) {
+        // Equality or deletion - advances position in text1
+        chars1 += text.length;
+      }
+      if (op !== DiffOp.Delete) {
+        // Equality or insertion - advances position in text2
+        chars2 += text.length;
+      }
+
+      if (chars1 > loc) {
+        // Overshot the location
+        break;
+      }
+      lastChars1 = chars1;
+      lastChars2 = chars2;
+    }
+
+    // If the location was deleted, return the position where deletion started in text2
+    // Otherwise, add the remaining characters
+    if (diffs.length > 0) {
+      const lastDiff = diffs[diffs.length - 1];
+      if (lastDiff && chars1 === loc && lastDiff[0] === DiffOp.Delete) {
+        // The location is at a deletion point
+        return lastChars2;
+      }
+    }
+
+    return lastChars2 + (loc - lastChars1);
+  }
+
+  /**
+   * Check if a specific text still exists at the translated position in the new text.
+   * 
+   * @param originalText - The text that should be at the position
+   * @param newText - The new document text
+   * @param translatedStart - The translated start position
+   * @returns true if the text matches at the translated position
+   */
+  static verifyTextAtPosition(originalText: string, newText: string, translatedStart: number): boolean {
+    if (translatedStart < 0 || translatedStart + originalText.length > newText.length) {
+      return false;
+    }
+    return newText.substring(translatedStart, translatedStart + originalText.length) === originalText;
+  }
+}
 
 // ============================================================================
 // Text Offset Mapper - Handles Unicode encoding differences
@@ -151,7 +268,8 @@ class TextOffsetMapper {
 
   /**
    * Given an approximate start index and the original text, find the exact position.
-   * This is useful when the offset might be slightly off due to encoding differences.
+   * This is useful when the offset might be slightly off due to encoding differences
+   * or when the document has changed during an async operation.
    */
   findNearbyText(searchText: string, approximateIndex: number, searchRadius: number = 20): { start: number; end: number } | null {
     // Try exact position first
@@ -160,7 +278,7 @@ class TextOffsetMapper {
       return { start: exactStart, end: exactStart + searchText.length };
     }
 
-    // Search nearby
+    // Search nearby with the given radius
     const searchStart = Math.max(0, approximateIndex - searchRadius);
     const searchEnd = Math.min(this.text.length, approximateIndex + searchRadius + searchText.length);
     const searchArea = this.text.substring(searchStart, searchEnd);
@@ -169,6 +287,13 @@ class TextOffsetMapper {
     if (foundInArea !== -1) {
       const actualStart = searchStart + foundInArea;
       return { start: actualStart, end: actualStart + searchText.length };
+    }
+
+    // If not found nearby, search the entire document as a fallback
+    // This handles cases where text moved significantly due to edits
+    const globalIndex = this.text.indexOf(searchText);
+    if (globalIndex !== -1) {
+      return { start: globalIndex, end: globalIndex + searchText.length };
     }
 
     return null;
@@ -398,6 +523,7 @@ let cachedStyleGuides: StyleGuideOption[] = [...BUILT_IN_STYLE_GUIDES];
 let isCheckingDocument: Map<string, boolean> = new Map();
 let isApplyingFix = false; // Flag to prevent re-checking when applying fixes
 let disabledCategories: Set<string> = new Set(); // Categories that are disabled by user
+let documentTextAtCheckStart: Map<string, string> = new Map(); // Store text when check started
 
 // ============================================================================
 // Utility Functions
@@ -525,6 +651,10 @@ async function checkDocument(
   isCheckingDocument.set(docKey, true);
   updateStatusBarChecking();
 
+  // Store the text at check start to detect changes during the check
+  const textAtCheckStart = text;
+  documentTextAtCheckStart.set(docKey, textAtCheckStart);
+
   try {
     const checker = new MarkupAIContentChecker(getApiToken());
     let result: CheckResult;
@@ -552,8 +682,8 @@ async function checkDocument(
     documentIssues.set(docKey, result.issues);
     documentScores.set(docKey, result.scores);
 
-    // Update diagnostics
-    updateDiagnostics(document, result.issues);
+    // Update diagnostics - pass the original text to handle document changes during check
+    updateDiagnostics(document, result.issues, textAtCheckStart);
 
     // Update status bar
     updateStatusBar(result.scores);
@@ -584,14 +714,34 @@ async function checkDocument(
     }
   } finally {
     isCheckingDocument.set(docKey, false);
+    // Clean up stored text for this document
+    documentTextAtCheckStart.delete(docKey);
   }
 }
 
 function updateDiagnostics(
   document: vscode.TextDocument,
-  issues: ContentIssue[]
+  issues: ContentIssue[],
+  originalText?: string
 ): void {
   const diagnostics: vscode.Diagnostic[] = [];
+  const currentText = document.getText();
+  const docKey = document.uri.toString();
+  
+  // Check if document changed during the check
+  const documentChanged = originalText !== undefined && originalText !== currentText;
+  
+  // Create offset translator using diff-match-patch if document changed
+  let offsetTranslator: OffsetTranslator | null = null;
+  if (documentChanged) {
+    offsetTranslator = new OffsetTranslator(originalText, currentText);
+  }
+  
+  // Create a text mapper for fallback text search
+  const currentTextMapper = documentChanged ? new TextOffsetMapper(currentText) : null;
+
+  // Track adjusted issues to update the documentIssues map
+  const adjustedIssues: ContentIssue[] = [];
 
   for (const issue of issues) {
     // Skip issues from disabled categories
@@ -599,8 +749,72 @@ function updateDiagnostics(
       continue;
     }
 
-    const startPos = indexToPosition(document, issue.startIndex);
-    const endPos = indexToPosition(document, issue.endIndex);
+    let startIndex = issue.startIndex;
+    let endIndex = issue.endIndex;
+
+    // If the document changed during the check, translate positions using diff algorithm
+    if (documentChanged && offsetTranslator) {
+      // Use diff-match-patch to translate the positions
+      const translatedRange = offsetTranslator.translateRange(issue.startIndex, issue.endIndex);
+      
+      if (translatedRange) {
+        startIndex = translatedRange.start;
+        endIndex = translatedRange.end;
+        
+        // Verify that the original text still exists at the translated position
+        if (!OffsetTranslator.verifyTextAtPosition(issue.originalText, currentText, startIndex)) {
+          // Text doesn't match at translated position, try fallback text search
+          if (currentTextMapper && issue.originalText) {
+            const fallbackPosition = currentTextMapper.findNearbyText(
+              issue.originalText,
+              startIndex,
+              100
+            );
+            
+            if (fallbackPosition) {
+              startIndex = fallbackPosition.start;
+              endIndex = fallbackPosition.end;
+            } else {
+              // Text not found - skip this issue as it was likely edited
+              continue;
+            }
+          } else {
+            continue;
+          }
+        }
+      } else {
+        // Range was deleted (start >= end after translation)
+        // Try fallback text search in case the text still exists elsewhere
+        if (currentTextMapper && issue.originalText) {
+          const fallbackPosition = currentTextMapper.findNearbyText(
+            issue.originalText,
+            issue.startIndex,
+            200 // Wider search for deleted ranges
+          );
+          
+          if (fallbackPosition) {
+            startIndex = fallbackPosition.start;
+            endIndex = fallbackPosition.end;
+          } else {
+            // Text truly not found - skip this issue
+            continue;
+          }
+        } else {
+          continue;
+        }
+      }
+    }
+
+    // Store adjusted issue for the findings panel
+    const adjustedIssue: ContentIssue = {
+      ...issue,
+      startIndex,
+      endIndex
+    };
+    adjustedIssues.push(adjustedIssue);
+
+    const startPos = indexToPosition(document, startIndex);
+    const endPos = indexToPosition(document, endIndex);
     const range = new vscode.Range(startPos, endPos);
 
     const diagnostic = new vscode.Diagnostic(
@@ -620,6 +834,11 @@ function updateDiagnostics(
     (diagnostic as any).markupaiSeverity = issue.severity;
 
     diagnostics.push(diagnostic);
+  }
+
+  // Update stored issues with adjusted positions for findings panel navigation
+  if (documentChanged) {
+    documentIssues.set(docKey, adjustedIssues);
   }
 
   diagnosticCollection.set(document.uri, diagnostics);
