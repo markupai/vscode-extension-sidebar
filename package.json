@@ -1,9 +1,14 @@
 {
   "name": "vscode-markupai",
   "displayName": "MarkupAI",
-  "description": "Markup AI",
+  "description": "Real-time content analysis in VS Code. Ensure your writing is clear, on-brand, and compliant with instant feedback as you type.",
   "version": "0.0.1",
   "publisher": "markupai",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/markupai/vscode-extension"
+  },
   "engines": {
     "vscode": "^1.108.1"
   },
@@ -279,7 +284,9 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "mkdir -p dist && vsce package --out dist/",
+    "package:pre-release": "mkdir -p dist && vsce package --pre-release --out dist/"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -287,6 +294,7 @@
     "@types/vscode": "^1.108.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.52.0"
