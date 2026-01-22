@@ -27,7 +27,7 @@
         {
           "id": "markupai-sidebar",
           "title": "MarkupAI",
-          "icon": "$(checklist)"
+          "icon": "assets/markup-icon-activitybar.svg"
         }
       ],
       "panel": [
