@@ -8,6 +8,7 @@ import {
   StyleGuideOption,
   FindingTreeItem,
   FolderScannerItem,
+  MarkupAIDiagnostic,
 } from "./types";
 import { DIALECTS, BUILT_IN_STYLE_GUIDES } from "./constants";
 import {
@@ -21,6 +22,19 @@ import {
   getScoreEmoji,
   getTypeEmoji,
 } from "./utils";
+
+// ============================================================================
+// Internal Types
+// ============================================================================
+
+interface ApplyFixArgs {
+  uri: string;
+  range: {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  };
+  suggestion: string;
+}
 
 // ============================================================================
 // Extension State
@@ -127,26 +141,35 @@ async function checkDocument(
     updateStatusBar(result.scores);
 
     // Refresh findings panel
-    if (findingsTreeDataProvider) {
-      findingsTreeDataProvider.refresh();
-    }
+    findingsTreeDataProvider.refresh();
 
     // Show completion notification (unless suppressed for batch operations)
     if (showCompletionNotification) {
-      showCheckCompleteNotification(result.scores, result.issues.length);
+      void showCheckCompleteNotification(result.scores, result.issues.length);
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("MarkupAI: Error checking content", error);
 
     // Only show error notifications if not in batch mode
     if (showCompletionNotification) {
-      if (error?.statusCode === 401) {
+      const isUnauthorized =
+        typeof error === "object" &&
+        error !== null &&
+        "statusCode" in error &&
+        error.statusCode === 401;
+      const errorMessage =
+        error &&
+        typeof error === "object" &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Unknown error";
+
+      if (isUnauthorized) {
         vscode.window.showErrorMessage("MarkupAI: Invalid API token. Please check your settings.");
         updateStatusBarNoToken();
       } else {
-        vscode.window.showErrorMessage(
-          `MarkupAI: Error checking content - ${error?.message || "Unknown error"}`,
-        );
+        vscode.window.showErrorMessage(`MarkupAI: Error checking content - ${errorMessage}`);
         statusBarItem.text = "⚠️ MarkupAI: Error";
         statusBarItem.show();
       }
@@ -259,17 +282,21 @@ function updateDiagnostics(
     const endPos = indexToPosition(document, endIndex);
     const range = new vscode.Range(startPos, endPos);
 
-    const diagnostic = new vscode.Diagnostic(range, issue.message, getSeverityForIssue(issue));
+    const diagnostic = new vscode.Diagnostic(
+      range,
+      issue.message,
+      getSeverityForIssue(issue),
+    ) as MarkupAIDiagnostic;
 
     diagnostic.source = "MarkupAI";
 
     // Store additional data in the diagnostic
-    (diagnostic as any).markupaiSuggestion = issue.suggestion;
-    (diagnostic as any).markupaiOriginalText = issue.originalText;
-    (diagnostic as any).markupaiIssueType = issue.type;
-    (diagnostic as any).markupaiCategory = issue.category;
-    (diagnostic as any).markupaiSubcategory = issue.subcategory;
-    (diagnostic as any).markupaiSeverity = issue.severity;
+    diagnostic.markupaiSuggestion = issue.suggestion;
+    diagnostic.markupaiOriginalText = issue.originalText;
+    diagnostic.markupaiIssueType = issue.type;
+    diagnostic.markupaiCategory = issue.category ?? "";
+    diagnostic.markupaiSubcategory = issue.subcategory;
+    diagnostic.markupaiSeverity = issue.severity;
 
     diagnostics.push(diagnostic);
   }
@@ -286,7 +313,8 @@ function updateDiagnostics(
 function filterDiagnosticsByDisabledCategories(): void {
   diagnosticCollection.forEach((uri, diagnostics) => {
     const filteredDiagnostics = diagnostics.filter((diagnostic) => {
-      const category = (diagnostic as any).markupaiCategory;
+      const markupDiagnostic = diagnostic as MarkupAIDiagnostic;
+      const category = markupDiagnostic.markupaiCategory;
       if (category && disabledCategories.has(category.toLowerCase())) {
         return false;
       }
@@ -300,18 +328,14 @@ function clearDiagnostics(document: vscode.TextDocument): void {
   diagnosticCollection.delete(document.uri);
   documentIssues.delete(document.uri.toString());
   documentScores.delete(document.uri.toString());
-  if (findingsTreeDataProvider) {
-    findingsTreeDataProvider.refresh();
-  }
+  findingsTreeDataProvider.refresh();
 }
 
 function clearAllDiagnostics(): void {
   diagnosticCollection.clear();
   documentIssues.clear();
   documentScores.clear();
-  if (findingsTreeDataProvider) {
-    findingsTreeDataProvider.refresh();
-  }
+  findingsTreeDataProvider.refresh();
 }
 
 async function setMarkupAIEnabled(enabled: boolean): Promise<void> {
@@ -329,7 +353,7 @@ async function setMarkupAIEnabled(enabled: boolean): Promise<void> {
     // Re-check the active document
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      checkDocument(editor.document, true);
+      void checkDocument(editor.document, true);
     }
   } else {
     vscode.window.showInformationMessage("MarkupAI: Issues Disabled");
@@ -349,8 +373,8 @@ function updateStatusBar(scores: ContentScores | null): void {
   }
 
   const emoji = getScoreEmoji(scores.overall);
-  statusBarItem.text = `${emoji} MarkupAI: ${scores.overall}`;
-  statusBarItem.tooltip = `Click to see detailed scores\n\nGrammar: ${scores.grammar}\nConsistency: ${scores.consistency}\nTerminology: ${scores.terminology}`;
+  statusBarItem.text = `${emoji} MarkupAI: ${String(scores.overall)}`;
+  statusBarItem.tooltip = `Click to see detailed scores\n\nGrammar: ${String(scores.grammar)}\nConsistency: ${String(scores.consistency)}\nTerminology: ${String(scores.terminology)}`;
   statusBarItem.command = "markupai.showScores";
   statusBarItem.backgroundColor = undefined;
   statusBarItem.show();
@@ -391,8 +415,8 @@ async function showCheckCompleteNotification(
 
   const message =
     `${scoreEmoji} MarkupAI Check Complete — ${statusMessage} | ` +
-    `Score: ${scores.overall} | ` +
-    `${issueCount} issue${issueCount !== 1 ? "s" : ""} found`;
+    `Score: ${String(scores.overall)} | ` +
+    `${String(issueCount)} issue${issueCount !== 1 ? "s" : ""} found`;
 
   const action = await vscode.window.showInformationMessage(
     message,
@@ -419,7 +443,7 @@ function scheduleCheck(document: vscode.TextDocument): void {
   // Schedule new check
   const delay = getConfig().get("checkDelay", 2000);
   const timer = setTimeout(() => {
-    checkDocument(document);
+    void checkDocument(document);
     checkDebounceTimers.delete(uri);
   }, delay);
 
@@ -437,7 +461,7 @@ class MarkupAICodeActionProvider implements vscode.CodeActionProvider {
     document: vscode.TextDocument,
     _range: vscode.Range | vscode.Selection,
     context: vscode.CodeActionContext,
-    _token: vscode.CancellationToken,
+    _cancellationToken: vscode.CancellationToken,
   ): vscode.CodeAction[] {
     const actions: vscode.CodeAction[] = [];
 
@@ -446,9 +470,10 @@ class MarkupAICodeActionProvider implements vscode.CodeActionProvider {
         continue;
       }
 
-      const suggestion = (diagnostic as any).markupaiSuggestion;
-      const originalText = (diagnostic as any).markupaiOriginalText;
-      const category = (diagnostic as any).markupaiCategory;
+      const markupDiagnostic = diagnostic as MarkupAIDiagnostic;
+      const suggestion = markupDiagnostic.markupaiSuggestion;
+      const originalText = markupDiagnostic.markupaiOriginalText;
+      const category = markupDiagnostic.markupaiCategory;
 
       if (suggestion && suggestion !== originalText) {
         // Create quick fix action using applyFix command to handle overlapping issues
@@ -511,7 +536,7 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
   provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
-    _token: vscode.CancellationToken,
+    _cancellationToken: vscode.CancellationToken,
   ): vscode.Hover | null {
     const diagnostics = diagnosticCollection.get(document.uri);
     if (!diagnostics) {
@@ -520,11 +545,12 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
 
     for (const diagnostic of diagnostics) {
       if (diagnostic.range.contains(position)) {
-        const suggestion = (diagnostic as any).markupaiSuggestion;
-        const originalText = (diagnostic as any).markupaiOriginalText;
-        const category = (diagnostic as any).markupaiCategory;
-        const subcategory = (diagnostic as any).markupaiSubcategory;
-        const severity = (diagnostic as any).markupaiSeverity;
+        const markupDiagnostic = diagnostic as MarkupAIDiagnostic;
+        const suggestion = markupDiagnostic.markupaiSuggestion;
+        const originalText = markupDiagnostic.markupaiOriginalText;
+        const category = markupDiagnostic.markupaiCategory;
+        const subcategory = markupDiagnostic.markupaiSubcategory;
+        const severity = markupDiagnostic.markupaiSeverity;
 
         const markdown = new vscode.MarkdownString();
         markdown.isTrusted = true;
@@ -533,7 +559,7 @@ class MarkupAIHoverProvider implements vscode.HoverProvider {
         // 1. Category on top
         if (category) {
           const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
-          const categoryEmoji = getTypeEmoji(category);
+          const categoryEmoji = getTypeEmoji(category as ContentIssue["type"]);
           markdown.appendMarkdown(`### ${categoryEmoji} ${categoryLabel}\n\n`);
         }
 
@@ -607,7 +633,7 @@ async function configureApiToken(): Promise<void> {
       // Re-check active document
       const editor = vscode.window.activeTextEditor;
       if (editor) {
-        checkDocument(editor.document, true);
+        void checkDocument(editor.document, true);
       }
     } else {
       updateStatusBarNoToken();
@@ -703,7 +729,7 @@ async function selectStyleGuide(): Promise<void> {
     // Re-check active document
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      checkDocument(editor.document, true);
+      void checkDocument(editor.document, true);
     }
   }
 }
@@ -729,7 +755,7 @@ async function selectDialect(): Promise<void> {
     // Re-check active document
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      checkDocument(editor.document, true);
+      void checkDocument(editor.document, true);
     }
   }
 }
@@ -772,26 +798,26 @@ async function showScoresDialog(): Promise<void> {
       kind: vscode.QuickPickItemKind.Separator,
     },
     {
-      label: `${getScoreEmoji(scores.overall)} Overall: ${scores.overall}`,
-      description: `${issues.length} issues`,
+      label: `${getScoreEmoji(scores.overall)} Overall: ${String(scores.overall)}`,
+      description: `${String(issues.length)} issues`,
     },
     {
-      label: `${getScoreEmoji(scores.grammar)} Grammar: ${scores.grammar}`,
-      description: `${grammarCount} issues`,
+      label: `${getScoreEmoji(scores.grammar)} Grammar: ${String(scores.grammar)}`,
+      description: `${String(grammarCount)} issues`,
     },
     {
-      label: `${getScoreEmoji(scores.consistency)} Consistency: ${scores.consistency}`,
-      description: `${consistencyCount} issues`,
+      label: `${getScoreEmoji(scores.consistency)} Consistency: ${String(scores.consistency)}`,
+      description: `${String(consistencyCount)} issues`,
     },
     {
-      label: `${getScoreEmoji(scores.terminology)} Terminology: ${scores.terminology}`,
-      description: `${terminologyCount} issues`,
+      label: `${getScoreEmoji(scores.terminology)} Terminology: ${String(scores.terminology)}`,
+      description: `${String(terminologyCount)} issues`,
     },
   ];
 
   if (otherCount > 0) {
     items.push({
-      label: `📋 Other: ${otherCount} issues`,
+      label: `📋 Other: ${String(otherCount)} issues`,
     });
   }
 
@@ -831,9 +857,9 @@ async function showScoresDialog(): Promise<void> {
 // ============================================================================
 
 class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<FindingTreeItem | undefined | null | void> =
-    new vscode.EventEmitter<FindingTreeItem | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<FindingTreeItem | undefined | null | void> =
+  private _onDidChangeTreeData: vscode.EventEmitter<FindingTreeItem | undefined | null> =
+    new vscode.EventEmitter<FindingTreeItem | undefined | null>();
+  readonly onDidChangeTreeData: vscode.Event<FindingTreeItem | undefined | null> =
     this._onDidChangeTreeData.event;
 
   private severityFilter: string | null = null;
@@ -841,7 +867,7 @@ class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeIte
   private showAllFiles: boolean = true;
 
   refresh(): void {
-    this._onDidChangeTreeData.fire();
+    this._onDidChangeTreeData.fire(undefined);
   }
 
   setSeverityFilter(severity: string | null): void {
@@ -875,11 +901,15 @@ class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeIte
       const treeItem = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
       treeItem.iconPath = vscode.ThemeIcon.File;
       treeItem.resourceUri = element.uri;
-      treeItem.description = `${element.children?.length || 0} issues`;
+      treeItem.description = `${String(element.children?.length || 0)} issues`;
       return treeItem;
     } else {
       // Issue item
-      const issue = element.issue!;
+      if (!element.issue) {
+        // Fallback for malformed item
+        return new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+      }
+      const issue = element.issue;
       const treeItem = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
 
       // Set icon based on severity with colors matching SonarQube style
@@ -980,7 +1010,7 @@ class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeIte
         let lineInfo = "";
         if (document) {
           const position = document.positionAt(issue.startIndex);
-          lineInfo = `Ln ${position.line + 1}`;
+          lineInfo = `Ln ${String(position.line + 1)}`;
         }
 
         // Truncate message if too long
@@ -1059,9 +1089,9 @@ let findingsTreeDataProvider: FindingsTreeDataProvider;
 // ============================================================================
 
 class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderScannerItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<FolderScannerItem | undefined | null | void> =
-    new vscode.EventEmitter<FolderScannerItem | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<FolderScannerItem | undefined | null | void> =
+  private _onDidChangeTreeData: vscode.EventEmitter<FolderScannerItem | undefined | null> =
+    new vscode.EventEmitter<FolderScannerItem | undefined | null>();
+  readonly onDidChangeTreeData: vscode.Event<FolderScannerItem | undefined | null> =
     this._onDidChangeTreeData.event;
 
   private rootFolder: vscode.Uri | null = null;
@@ -1108,7 +1138,7 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
   }
 
   refresh(): void {
-    this._onDidChangeTreeData.fire();
+    this._onDidChangeTreeData.fire(undefined);
   }
 
   setRootFolder(folder: vscode.Uri): void {
@@ -1131,7 +1161,7 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
     if (!this.rootFolder) {
       return;
     }
-    this.getAllFiles().then((files) => {
+    void this.getAllFiles().then((files) => {
       files.forEach((file) => this.selectedFiles.add(file.toString()));
       this.refresh();
     });
@@ -1206,10 +1236,10 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
 
       // Check if file has been checked and show status
       const docKey = element.uri.toString();
-      if (documentScores.has(docKey)) {
-        const score = documentScores.get(docKey)!;
+      const score = documentScores.get(docKey);
+      if (score) {
         const emoji = getScoreEmoji(score.overall);
-        treeItem.description = `${emoji} ${score.overall}`;
+        treeItem.description = `${emoji} ${String(score.overall)}`;
       }
 
       // Make file clickable to open it
@@ -1226,14 +1256,15 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
   async getChildren(element?: FolderScannerItem): Promise<FolderScannerItem[]> {
     if (!this.rootFolder) {
       // No workspace folder - try to initialize again in case workspace changed
-      this.initializeFromWorkspace();
-      if (!this.rootFolder) {
+      const initialized = this.initializeFromWorkspace();
+      if (!initialized) {
         return [];
       }
     }
 
     if (!element) {
       // Root level - show folder contents
+      // rootFolder is guaranteed non-null here due to the check above
       return this.getFolderContents(this.rootFolder);
     } else if (element.type === "folder") {
       return this.getFolderContents(element.uri);
@@ -1242,7 +1273,10 @@ class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<FolderSca
     return [];
   }
 
-  private async getFolderContents(folder: vscode.Uri): Promise<FolderScannerItem[]> {
+  private async getFolderContents(folder: vscode.Uri | null): Promise<FolderScannerItem[]> {
+    if (folder === null) {
+      return [];
+    }
     const items: FolderScannerItem[] = [];
 
     try {
@@ -1319,14 +1353,14 @@ async function checkMultipleFiles(files: vscode.Uri[]): Promise<void> {
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: `MarkupAI: Checking ${totalFiles} file(s)...`,
+      title: `MarkupAI: Checking ${String(totalFiles)} file(s)...`,
       cancellable: false,
     },
     async (progress) => {
       for (const fileUri of files) {
         const fileName = fileUri.path.split("/").pop() || fileUri.path;
         progress.report({
-          message: `Checking ${fileName} (${completed + 1}/${totalFiles})`,
+          message: `Checking ${fileName} (${String(completed + 1)}/${String(totalFiles)})`,
           increment: (1 / totalFiles) * 100,
         });
 
@@ -1335,9 +1369,16 @@ async function checkMultipleFiles(files: vscode.Uri[]): Promise<void> {
           // Pass false for showProgress and showCompletionNotification during batch operations
           await checkDocument(document, false, false);
           completed++;
-        } catch (error: any) {
+        } catch (error: unknown) {
           failed++;
-          errors.push(`${fileName}: ${error?.message || "Unknown error"}`);
+          const errorMessage =
+            error &&
+            typeof error === "object" &&
+            "message" in error &&
+            typeof error.message === "string"
+              ? error.message
+              : "Unknown error";
+          errors.push(`${fileName}: ${errorMessage}`);
           console.error(`MarkupAI: Error checking ${fileName}`, error);
         }
       }
@@ -1348,14 +1389,12 @@ async function checkMultipleFiles(files: vscode.Uri[]): Promise<void> {
   folderScannerTreeDataProvider.refresh();
 
   // Refresh findings panel
-  if (findingsTreeDataProvider) {
-    findingsTreeDataProvider.refresh();
-  }
+  findingsTreeDataProvider.refresh();
 
   // Show completion summary
-  let message = `MarkupAI: Checked ${completed} file(s)`;
+  let message = `MarkupAI: Checked ${String(completed)} file(s)`;
   if (failed > 0) {
-    message += `, ${failed} failed`;
+    message += `, ${String(failed)} failed`;
   }
 
   if (failed === 0) {
@@ -1397,7 +1436,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Fetch style guides from server on startup (async, don't block activation)
   if (hasApiToken()) {
-    refreshStyleGuides().catch((error) => {
+    refreshStyleGuides().catch((error: unknown) => {
       console.error("MarkupAI: Failed to fetch style guides on startup", error);
     });
   }
@@ -1439,7 +1478,7 @@ export function activate(context: vscode.ExtensionContext) {
   const updateTreeViewTitle = () => {
     const count = findingsTreeDataProvider.getTotalIssueCount();
     const filters = findingsTreeDataProvider.getFilters();
-    let title = `Findings (${count})`;
+    let title = `Findings (${String(count)})`;
     if (filters.severity || filters.category) {
       const activeFilters = [filters.severity, filters.category].filter(Boolean).join(", ");
       title += ` - Filtered: ${activeFilters}`;
@@ -1655,7 +1694,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("markupai.checkContent", () => {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
-        checkDocument(editor.document, true);
+        void checkDocument(editor.document, true);
       }
     }),
   );
@@ -1680,7 +1719,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to disable a specific category
   context.subscriptions.push(
-    vscode.commands.registerCommand("markupai.disableCategory", async (category: string) => {
+    vscode.commands.registerCommand("markupai.disableCategory", (category: string) => {
       if (!category) {
         return;
       }
@@ -1693,7 +1732,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Remove diagnostics for this category from all documents
       filterDiagnosticsByDisabledCategories();
-      findingsTreeDataProvider?.refresh();
+      findingsTreeDataProvider.refresh();
     }),
   );
 
@@ -1729,7 +1768,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `MarkupAI: Enabled ${selected.join(", ")} issues. Run "MarkupAI - Check Content" to see them.`,
         );
-        findingsTreeDataProvider?.refresh();
+        findingsTreeDataProvider.refresh();
       }
     }),
   );
@@ -1751,12 +1790,13 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("markupai.applyFix", async (args: any) => {
+    vscode.commands.registerCommand("markupai.applyFix", async (args: string | ApplyFixArgs) => {
       if (!args) {
         return;
       }
 
-      const parsedArgs = typeof args === "string" ? JSON.parse(args) : args;
+      const parsedArgs: ApplyFixArgs =
+        typeof args === "string" ? (JSON.parse(args) as ApplyFixArgs) : args;
       const uri = vscode.Uri.parse(parsedArgs.uri);
       const range = new vscode.Range(
         new vscode.Position(parsedArgs.range.start.line, parsedArgs.range.start.character),
@@ -1822,9 +1862,7 @@ export function activate(context: vscode.ExtensionContext) {
         updateDiagnostics(document, updatedIssues);
 
         // Refresh the findings panel
-        if (findingsTreeDataProvider) {
-          findingsTreeDataProvider.refresh();
-        }
+        findingsTreeDataProvider.refresh();
       }
 
       // Reset flag after a short delay to allow the document change event to fire
@@ -1837,8 +1875,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Document Events
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
+      // Runtime check - user can change this setting
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (getConfig().get("checkOnOpen", true)) {
-        checkDocument(document);
+        void checkDocument(document);
       }
     }),
   );
@@ -1852,6 +1892,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // Only auto-check on change if the setting is enabled (default: false)
+      // Runtime check - user can change this setting
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (getConfig().get("checkOnChange", false)) {
         scheduleCheck(event.document);
       }
@@ -1878,7 +1920,7 @@ export function activate(context: vscode.ExtensionContext) {
         } else if (!hasApiToken()) {
           updateStatusBarNoToken();
         } else {
-          checkDocument(editor.document);
+          void checkDocument(editor.document);
         }
       } else {
         statusBarItem.hide();
@@ -1894,6 +1936,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Update context for menu visibility
         vscode.commands.executeCommand("setContext", "markupai.enabled", isEnabled);
 
+        // Runtime check - user can change this setting
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (!isEnabled) {
           clearAllDiagnostics();
           statusBarItem.text = "$(circle-slash) MarkupAI: Disabled";
@@ -1904,26 +1948,26 @@ export function activate(context: vscode.ExtensionContext) {
         } else {
           const editor = vscode.window.activeTextEditor;
           if (editor) {
-            checkDocument(editor.document);
+            void checkDocument(editor.document);
           }
         }
       }
 
       if (event.affectsConfiguration("markupai.apiToken")) {
-        refreshStyleGuides();
+        void refreshStyleGuides();
       }
     }),
   );
 
   // Initial setup
   if (hasApiToken()) {
-    refreshStyleGuides();
+    void refreshStyleGuides();
   }
 
   // Check currently open document on activation
   if (vscode.window.activeTextEditor) {
     if (hasApiToken()) {
-      checkDocument(vscode.window.activeTextEditor.document);
+      void checkDocument(vscode.window.activeTextEditor.document);
     } else {
       updateStatusBarNoToken();
     }
