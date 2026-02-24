@@ -5,7 +5,7 @@ import { ContentIssue, FindingTreeItem } from "./types";
  * Provides tree data for the Findings panel showing content issues.
  */
 export class FindingsTreeDataProvider implements vscode.TreeDataProvider<FindingTreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<FindingTreeItem | undefined | null> =
+  private readonly _onDidChangeTreeData: vscode.EventEmitter<FindingTreeItem | undefined | null> =
     new vscode.EventEmitter<FindingTreeItem | undefined | null>();
   readonly onDidChangeTreeData: vscode.Event<FindingTreeItem | undefined | null> =
     this._onDidChangeTreeData.event;
@@ -14,7 +14,7 @@ export class FindingsTreeDataProvider implements vscode.TreeDataProvider<Finding
   private categoryFilter: string | null = null;
   private showAllFiles: boolean = true;
 
-  constructor(private getDocumentIssues: () => Map<string, ContentIssue[]>) {}
+  constructor(private readonly getDocumentIssues: () => Map<string, ContentIssue[]>) {}
 
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
@@ -117,12 +117,10 @@ export class FindingsTreeDataProvider implements vscode.TreeDataProvider<Finding
       documentIssues.forEach((_, uriString) => {
         urisToShow.push(uriString);
       });
-    } else {
-      if (activeEditor) {
-        const currentUri = activeEditor.document.uri.toString();
-        if (documentIssues.has(currentUri)) {
-          urisToShow.push(currentUri);
-        }
+    } else if (activeEditor) {
+      const currentUri = activeEditor.document.uri.toString();
+      if (documentIssues.has(currentUri)) {
+        urisToShow.push(currentUri);
       }
     }
 

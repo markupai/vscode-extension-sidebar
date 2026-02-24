@@ -57,6 +57,56 @@ function isExtensionEnabled(): boolean {
 // Core Functionality
 // ============================================================================
 
+async function runContentCheck(
+  text: string,
+  document: vscode.TextDocument,
+  showProgress: boolean,
+): Promise<{ issues: ContentIssue[]; scores: ContentScores }> {
+  const checker = new MarkupAIContentChecker(getApiToken());
+  const check = () => checker.checkContent(text, getDialect(), getStyleGuide(), document.fileName);
+
+  if (!showProgress) {
+    return check();
+  }
+
+  return await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "MarkupAI: Checking content...",
+      cancellable: false,
+    },
+    () => check(),
+  );
+}
+
+function handleCheckError(error: unknown, showCompletionNotification: boolean): void {
+  console.error("MarkupAI: Error checking content", error);
+
+  if (!showCompletionNotification) {
+    throw error;
+  }
+
+  const isUnauthorized =
+    typeof error === "object" &&
+    error !== null &&
+    "statusCode" in error &&
+    error.statusCode === 401;
+
+  if (isUnauthorized) {
+    vscode.window.showErrorMessage("MarkupAI: Invalid API token. Please check your settings.");
+    statusBar.showNoToken();
+    return;
+  }
+
+  const errorMessage =
+    error && typeof error === "object" && "message" in error && typeof error.message === "string"
+      ? error.message
+      : "Unknown error";
+
+  vscode.window.showErrorMessage(`MarkupAI: Error checking content - ${errorMessage}`);
+  statusBar.showError();
+}
+
 async function checkDocument(
   document: vscode.TextDocument,
   showProgress: boolean = false,
@@ -102,23 +152,7 @@ async function checkDocument(
   const textAtCheckStart = text;
 
   try {
-    const checker = new MarkupAIContentChecker(getApiToken());
-    let result: { issues: ContentIssue[]; scores: ContentScores };
-
-    if (showProgress) {
-      result = await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "MarkupAI: Checking content...",
-          cancellable: false,
-        },
-        async () => {
-          return await checker.checkContent(text, getDialect(), getStyleGuide(), document.fileName);
-        },
-      );
-    } else {
-      result = await checker.checkContent(text, getDialect(), getStyleGuide(), document.fileName);
-    }
+    const result = await runContentCheck(text, document, showProgress);
 
     diagnosticsManager.setIssues(docKey, result.issues);
     diagnosticsManager.setScores(docKey, result.scores);
@@ -130,32 +164,7 @@ async function checkDocument(
       void showCheckCompleteNotification(result.scores, result.issues.length);
     }
   } catch (error: unknown) {
-    console.error("MarkupAI: Error checking content", error);
-
-    if (showCompletionNotification) {
-      const isUnauthorized =
-        typeof error === "object" &&
-        error !== null &&
-        "statusCode" in error &&
-        error.statusCode === 401;
-      const errorMessage =
-        error &&
-        typeof error === "object" &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Unknown error";
-
-      if (isUnauthorized) {
-        vscode.window.showErrorMessage("MarkupAI: Invalid API token. Please check your settings.");
-        statusBar.showNoToken();
-      } else {
-        vscode.window.showErrorMessage(`MarkupAI: Error checking content - ${errorMessage}`);
-        statusBar.showError();
-      }
-    } else {
-      throw error;
-    }
+    handleCheckError(error, showCompletionNotification);
   } finally {
     isCheckingDocument.set(docKey, false);
   }
@@ -181,7 +190,7 @@ async function showCheckCompleteNotification(
   const message =
     `${scoreEmoji} MarkupAI Check Complete — ${statusMessage} | ` +
     `Score: ${String(scores.overall)} | ` +
-    `${String(issueCount)} issue${issueCount !== 1 ? "s" : ""} found`;
+    `${String(issueCount)} issue${issueCount === 1 ? "" : "s"} found`;
 
   const action = await vscode.window.showInformationMessage(
     message,
@@ -322,7 +331,7 @@ async function selectStyleGuide(): Promise<void> {
     matchOnDetail: true,
   });
 
-  if (selected && selected.detail) {
+  if (selected?.detail) {
     await getConfig().update("styleGuide", selected.detail, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage(`MarkupAI: Style guide set to "${selected.label}"`);
 
@@ -347,7 +356,7 @@ async function selectDialect(): Promise<void> {
     canPickMany: false,
   });
 
-  if (selected && selected.detail) {
+  if (selected?.detail) {
     await getConfig().update("dialect", selected.detail, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage(`MarkupAI: Dialect set to "${selected.label}"`);
 
@@ -653,8 +662,13 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      const severityLabels: Record<string, string> = {
+        high: "🔴 High",
+        medium: "🟡 Medium",
+        low: "🔵 Low",
+      };
       const items = severities.map((s) => ({
-        label: s === "high" ? "🔴 High" : s === "medium" ? "🟡 Medium" : "🔵 Low",
+        label: severityLabels[s] ?? "🔵 Low",
         value: s,
       }));
       items.unshift({ label: "All Severities", value: "" });
@@ -734,7 +748,7 @@ export function activate(context: vscode.ExtensionContext) {
         defaultUri: currentFolder || undefined,
       });
 
-      if (folderUri && folderUri[0]) {
+      if (folderUri?.[0]) {
         folderScannerTreeDataProvider.setRootFolder(folderUri[0]);
         const folderName = folderUri[0].path.split("/").pop() || folderUri[0].fsPath;
         vscode.window.showInformationMessage(`MarkupAI: Now scanning "${folderName}"`);
@@ -1037,10 +1051,10 @@ export function activate(context: vscode.ExtensionContext) {
         const scores = diagnosticsManager.getScores(editor.document.uri.toString());
         if (scores) {
           statusBar.update(scores);
-        } else if (!hasApiToken()) {
-          statusBar.showNoToken();
-        } else {
+        } else if (hasApiToken()) {
           void checkDocument(editor.document);
+        } else {
+          statusBar.showNoToken();
         }
       } else {
         statusBar.hide();
@@ -1057,15 +1071,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Runtime check - user can change this setting
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (!isEnabled) {
-          diagnosticsManager.clearAll();
-          findingsTreeDataProvider.refresh();
-          statusBar.showDisabled();
-        } else {
+        if (isEnabled) {
           const editor = vscode.window.activeTextEditor;
           if (editor) {
             void checkDocument(editor.document);
           }
+        } else {
+          diagnosticsManager.clearAll();
+          findingsTreeDataProvider.refresh();
+          statusBar.showDisabled();
         }
       }
 
