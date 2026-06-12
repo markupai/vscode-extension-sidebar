@@ -1,15 +1,19 @@
 import * as vscode from "vscode";
 import { OffsetTranslator } from "./offsetMapper";
-import { MarkupAIContentChecker } from "./apiClient";
-import { ContentIssue, ContentScores, StyleGuideOption, FolderScannerItem } from "./types";
-import { DIALECTS, BUILT_IN_STYLE_GUIDES } from "./constants";
+import { AuthManager, promptForToken } from "./auth";
+import { isBrowserSignInAvailable, runBrowserSignIn } from "./browserSignIn";
+import { StyleAgentClient, StyleAgentConfig, AuthError } from "./styleAgentApi";
+import { toCheckResult } from "./resultMapper";
+import { ContentIssue, DocumentAssessment, StyleGuideOption, FolderScannerItem } from "./types";
+import { OAUTH_PROVIDER, USER_MESSAGE_PREFIX } from "./constants";
 import {
   getConfig,
-  getApiToken,
-  hasApiToken,
-  getDialect,
-  getStyleGuide,
+  getApiBaseUrl,
+  getStyleGuideId,
   getScoreEmoji,
+  getSeverityEmoji,
+  getLeadSeverity,
+  formatRiskSummary,
   isWebEnvironment,
   isSupportedScheme,
   isCorsOrNetworkError,
@@ -43,12 +47,15 @@ let diagnosticsManager: DiagnosticsManager;
 let statusBar: StatusBarManager;
 let findingsTreeDataProvider: FindingsTreeDataProvider;
 let folderScannerTreeDataProvider: FolderScannerTreeDataProvider;
+let auth: AuthManager;
 const checkDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 let isEnabled = true;
-let cachedStyleGuides: StyleGuideOption[] = [...BUILT_IN_STYLE_GUIDES];
+let cachedStyleGuides: StyleGuideOption[] = [];
+let orgConfig: StyleAgentConfig | null = null;
 const isCheckingDocument: Map<string, boolean> = new Map();
 let isApplyingFix = false;
 let corsWarningShown = false;
+let styleAgentDisabledWarningShown = false;
 
 // ============================================================================
 // Extension-specific Utility Functions
@@ -58,17 +65,84 @@ function isExtensionEnabled(): boolean {
   return isEnabled && getConfig().get("enabled", true);
 }
 
+function createClient(): StyleAgentClient {
+  return new StyleAgentClient({
+    baseUrl: getApiBaseUrl(),
+    getToken: () => auth.getValidToken(),
+  });
+}
+
+function resetSessionCaches(): void {
+  orgConfig = null;
+  cachedStyleGuides = [];
+  styleAgentDisabledWarningShown = false;
+}
+
 // ============================================================================
 // Core Functionality
 // ============================================================================
+
+/**
+ * Fetches and caches the org config. Returns false (and warns) when the
+ * Style Agent is disabled for the organization.
+ */
+async function ensureStyleAgentAvailable(): Promise<boolean> {
+  if (!orgConfig) {
+    try {
+      orgConfig = await createClient().getConfig();
+    } catch (error) {
+      // Config is a gate, not a hard dependency — let the check call
+      // surface a meaningful error instead.
+      console.error("MarkupAI: Error fetching org config", error);
+      return true;
+    }
+  }
+
+  if (orgConfig.style_agent === "disabled") {
+    if (!styleAgentDisabledWarningShown) {
+      styleAgentDisabledWarningShown = true;
+      void vscode.window.showWarningMessage(
+        `${USER_MESSAGE_PREFIX}the Style Agent is not enabled for your organization.`,
+      );
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Configured style guide ID, or the organization's default style guide
+ * (is_default in the style guide list, e.g. "Main") when none is set.
+ */
+async function resolveStyleGuideId(): Promise<string | undefined> {
+  const configured = getStyleGuideId();
+  if (configured) {
+    return configured;
+  }
+  if (cachedStyleGuides.length === 0) {
+    await refreshStyleGuides();
+  }
+  return cachedStyleGuides.find((g) => g.isDefault)?.id;
+}
 
 async function runContentCheck(
   text: string,
   document: vscode.TextDocument,
   showProgress: boolean,
-): Promise<{ issues: ContentIssue[]; scores: ContentScores }> {
-  const checker = new MarkupAIContentChecker(getApiToken());
-  const check = () => checker.checkContent(text, getDialect(), getStyleGuide(), document.fileName);
+): Promise<{ issues: ContentIssue[]; assessment: DocumentAssessment }> {
+  const client = createClient();
+  const fileName = document.uri.path.split("/").pop() || document.uri.path;
+  const styleGuideId = await resolveStyleGuideId();
+
+  const check = async () => {
+    const workflow = await client.runCheck({
+      text,
+      ...(styleGuideId ? { styleGuideId } : {}),
+      documentName: fileName,
+      documentRef: document.uri.toString(),
+    });
+    return toCheckResult(workflow, text);
+  };
 
   if (!showProgress) {
     return check();
@@ -101,20 +175,20 @@ function handleCheckError(error: unknown, showCompletionNotification: boolean): 
     return;
   }
 
-  if (!showCompletionNotification) {
-    throw error;
+  if (error instanceof AuthError) {
+    statusBar.showSignedOut();
+    void vscode.window
+      .showErrorMessage(`${USER_MESSAGE_PREFIX}your session has expired.`, "Sign In")
+      .then((action) => {
+        if (action === "Sign In") {
+          void vscode.commands.executeCommand("markupai.signIn");
+        }
+      });
+    return;
   }
 
-  const isUnauthorized =
-    typeof error === "object" &&
-    error !== null &&
-    "statusCode" in error &&
-    error.statusCode === 401;
-
-  if (isUnauthorized) {
-    vscode.window.showErrorMessage("MarkupAI: Invalid API token. Please check your settings.");
-    statusBar.showNoToken();
-    return;
+  if (!showCompletionNotification) {
+    throw error;
   }
 
   const errorMessage =
@@ -138,8 +212,8 @@ async function checkDocument(
     return;
   }
 
-  if (!hasApiToken()) {
-    statusBar.showNoToken();
+  if (!(await auth.isSignedIn())) {
+    statusBar.showSignedOut();
     return;
   }
 
@@ -150,13 +224,12 @@ async function checkDocument(
   const text = document.getText();
   if (!text.trim()) {
     diagnosticsManager.clearForDocument(document.uri);
-    statusBar.update({
-      grammar: 100,
-      consistency: 100,
-      terminology: 100,
-      overall: 100,
-    });
+    statusBar.update({ risk: { high: 0, medium: 0, low: 0, total: 0 } });
     findingsTreeDataProvider.refresh();
+    return;
+  }
+
+  if (!(await ensureStyleAgentAvailable())) {
     return;
   }
 
@@ -174,13 +247,13 @@ async function checkDocument(
     const result = await runContentCheck(text, document, showProgress);
 
     diagnosticsManager.setIssues(docKey, result.issues);
-    diagnosticsManager.setScores(docKey, result.scores);
+    diagnosticsManager.setAssessment(docKey, result.assessment);
     diagnosticsManager.updateDiagnostics(document, result.issues, textAtCheckStart);
-    statusBar.update(result.scores);
+    statusBar.update(result.assessment);
     findingsTreeDataProvider.refresh();
 
     if (showCompletionNotification) {
-      void showCheckCompleteNotification(result.scores, result.issues.length);
+      void showCheckCompleteNotification(result.assessment);
     }
   } catch (error: unknown) {
     handleCheckError(error, showCompletionNotification);
@@ -189,30 +262,39 @@ async function checkDocument(
   }
 }
 
-async function showCheckCompleteNotification(
-  scores: ContentScores,
-  issueCount: number,
-): Promise<void> {
-  const scoreEmoji = getScoreEmoji(scores.overall);
-
-  let statusMessage: string;
-  if (scores.overall >= 90) {
-    statusMessage = "Excellent!";
-  } else if (scores.overall >= 70) {
-    statusMessage = "Good";
-  } else if (scores.overall >= 50) {
-    statusMessage = "Needs Improvement";
-  } else {
-    statusMessage = "Needs Attention";
+function scoreStatusLabel(score: number): string {
+  if (score >= 90) {
+    return "Excellent!";
   }
+  if (score >= 70) {
+    return "Good";
+  }
+  if (score >= 50) {
+    return "Needs Improvement";
+  }
+  return "Needs Attention";
+}
 
-  const message =
-    `${scoreEmoji} MarkupAI Check Complete — ${statusMessage} | ` +
-    `Score: ${String(scores.overall)} | ` +
-    `${String(issueCount)} issue${issueCount === 1 ? "" : "s"} found`;
+function buildCheckCompleteMessage(assessment: DocumentAssessment): string {
+  const { risk, score } = assessment;
+  const issueCount = `${String(risk.total)} issue${risk.total === 1 ? "" : "s"}`;
 
+  if (typeof score === "number") {
+    return (
+      `${getScoreEmoji(score)} MarkupAI Check Complete — ${scoreStatusLabel(score)} | ` +
+      `Score: ${String(score)} | ${issueCount} found`
+    );
+  }
+  if (risk.total === 0) {
+    return "✅ MarkupAI Check Complete — no issues found";
+  }
+  const emoji = getSeverityEmoji(getLeadSeverity(risk));
+  return `${emoji} MarkupAI Check Complete — ${issueCount} (${formatRiskSummary(risk)})`;
+}
+
+async function showCheckCompleteNotification(assessment: DocumentAssessment): Promise<void> {
   const action = await vscode.window.showInformationMessage(
-    message,
+    buildCheckCompleteMessage(assessment),
     "View Details",
     "Show Findings",
   );
@@ -242,48 +324,133 @@ function scheduleCheck(document: vscode.TextDocument): void {
 }
 
 // ============================================================================
-// Commands
+// Authentication Commands
 // ============================================================================
 
-async function configureApiToken(): Promise<void> {
-  const currentToken = getApiToken();
-  const token = await vscode.window.showInputBox({
-    prompt: "Enter your MarkupAI API token",
-    password: true,
-    value: currentToken,
-    placeHolder: "Paste your API token here",
-    ignoreFocusOut: true,
+async function pickSignInMethod(): Promise<"browser" | "paste" | undefined> {
+  if (!isBrowserSignInAvailable()) {
+    return "paste";
+  }
+
+  const items: vscode.QuickPickItem[] = [
+    {
+      label: "$(globe) Sign in with browser",
+      detail: "Opens markup.ai in your browser to sign in",
+    },
+    {
+      label: "$(key) Paste access token or API key",
+      detail: "For tokens obtained elsewhere (JWT or mat_… API key)",
+    },
+  ];
+  const selected = await vscode.window.showQuickPick(items, {
+    title: "MarkupAI Sign In",
+    placeHolder: "Choose how to sign in",
   });
+  if (!selected) {
+    return undefined;
+  }
+  return selected.label.includes("browser") ? "browser" : "paste";
+}
 
-  if (token !== undefined) {
-    await getConfig().update("apiToken", token, vscode.ConfigurationTarget.Global);
-
-    if (token.trim()) {
-      vscode.window.showInformationMessage("MarkupAI: API token saved");
-      await refreshStyleGuides();
-
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        void checkDocument(editor.document, true);
-      }
-    } else {
-      statusBar.showNoToken();
+async function browserSignIn(): Promise<boolean> {
+  try {
+    return await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "MarkupAI: Complete the sign-in in your browser…",
+        cancellable: false,
+      },
+      async () => {
+        const result = await runBrowserSignIn({
+          apiBaseUrl: getApiBaseUrl(),
+          provider: OAUTH_PROVIDER,
+        });
+        await auth.setSession(result);
+        return true;
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "sign-in failed.";
+    const action = await vscode.window.showErrorMessage(message, "Paste token instead");
+    if (action === "Paste token instead") {
+      return promptForToken(auth);
     }
+    return false;
   }
 }
 
+async function signIn(): Promise<void> {
+  const method = await pickSignInMethod();
+  if (!method) {
+    return;
+  }
+
+  const signedIn = method === "browser" ? await browserSignIn() : await promptForToken(auth);
+  if (!signedIn) {
+    return;
+  }
+
+  vscode.window.showInformationMessage(`${USER_MESSAGE_PREFIX}signed in.`);
+  resetSessionCaches();
+  await refreshStyleGuides();
+
+  const editor = vscode.window.activeTextEditor;
+  if (editor) {
+    void checkDocument(editor.document, true);
+  }
+}
+
+async function signOut(): Promise<void> {
+  await auth.signOut();
+  resetSessionCaches();
+  diagnosticsManager.clearAll();
+  findingsTreeDataProvider.refresh();
+  statusBar.showSignedOut();
+  vscode.window.showInformationMessage(`${USER_MESSAGE_PREFIX}signed out.`);
+}
+
+/**
+ * Guard for commands that need a session: prompts to sign in when needed.
+ * Returns true when signed in.
+ */
+async function requireSignIn(): Promise<boolean> {
+  if (await auth.isSignedIn()) {
+    return true;
+  }
+  const action = await vscode.window.showWarningMessage(
+    `${USER_MESSAGE_PREFIX}sign in to check content.`,
+    "Sign In",
+  );
+  if (action === "Sign In") {
+    await signIn();
+    return auth.isSignedIn();
+  }
+  return false;
+}
+
+// ============================================================================
+// Style Guide Commands
+// ============================================================================
+
 async function refreshStyleGuides(): Promise<void> {
-  if (!hasApiToken()) {
-    cachedStyleGuides = [...BUILT_IN_STYLE_GUIDES];
+  if (!(await auth.isSignedIn())) {
+    cachedStyleGuides = [];
     return;
   }
 
   try {
-    const checker = new MarkupAIContentChecker(getApiToken());
-    cachedStyleGuides = await checker.fetchStyleGuides();
+    const guides = await createClient().listStyleGuides();
+    cachedStyleGuides = guides.map((g) => ({
+      id: g.id,
+      name: g.display_name,
+      isDefault: g.is_default,
+      ...(g.language_name
+        ? { language: [g.language_name, g.language_variant_name].filter(Boolean).join(" — ") }
+        : {}),
+    }));
   } catch (error) {
     console.error("MarkupAI: Error refreshing style guides", error);
-    cachedStyleGuides = [...BUILT_IN_STYLE_GUIDES];
+    cachedStyleGuides = [];
 
     if (isWebEnvironment() && isCorsOrNetworkError(error) && !corsWarningShown) {
       corsWarningShown = true;
@@ -298,14 +465,7 @@ async function refreshStyleGuides(): Promise<void> {
 }
 
 async function selectStyleGuide(): Promise<void> {
-  if (!hasApiToken()) {
-    const action = await vscode.window.showWarningMessage(
-      "MarkupAI: API token required to fetch style guides",
-      "Configure Token",
-    );
-    if (action === "Configure Token") {
-      await configureApiToken();
-    }
+  if (!(await requireSignIn())) {
     return;
   }
 
@@ -320,37 +480,18 @@ async function selectStyleGuide(): Promise<void> {
     },
   );
 
-  const currentStyleGuide = getStyleGuide();
-  const customGuides = cachedStyleGuides.filter((g) => !g.isBuiltIn);
-  const builtInGuides = cachedStyleGuides.filter((g) => g.isBuiltIn);
-
-  const items: vscode.QuickPickItem[] = [];
-
-  if (customGuides.length > 0) {
-    items.push({
-      label: "Your Style Guides",
-      kind: vscode.QuickPickItemKind.Separator,
-    });
-    for (const guide of customGuides) {
-      items.push({
-        label: guide.name,
-        description: guide.id === currentStyleGuide ? "✓ Selected" : "",
-        detail: guide.id,
-      });
-    }
+  if (cachedStyleGuides.length === 0) {
+    vscode.window.showWarningMessage(`${USER_MESSAGE_PREFIX}no style guides available.`);
+    return;
   }
 
-  items.push({
-    label: "Built-in Style Guides",
-    kind: vscode.QuickPickItemKind.Separator,
-  });
-  for (const guide of builtInGuides) {
-    items.push({
-      label: guide.name,
-      description: guide.id === currentStyleGuide ? "✓ Selected" : "",
-      detail: guide.id,
-    });
-  }
+  const currentStyleGuideId = getStyleGuideId() || cachedStyleGuides.find((g) => g.isDefault)?.id;
+
+  const items: vscode.QuickPickItem[] = cachedStyleGuides.map((guide) => ({
+    label: guide.name + (guide.isDefault ? " (default)" : ""),
+    description: guide.id === currentStyleGuideId ? "✓ Selected" : (guide.language ?? ""),
+    detail: guide.id,
+  }));
 
   const selected = await vscode.window.showQuickPick(items, {
     title: "Select Style Guide",
@@ -360,39 +501,16 @@ async function selectStyleGuide(): Promise<void> {
     matchOnDetail: true,
   });
 
-  if (selected?.detail) {
-    await getConfig().update("styleGuide", selected.detail, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`MarkupAI: Style guide set to "${selected.label}"`);
-
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      void checkDocument(editor.document, true);
-    }
+  if (!selected?.detail) {
+    return;
   }
-}
 
-async function selectDialect(): Promise<void> {
-  const currentDialect = getDialect();
-  const items: vscode.QuickPickItem[] = DIALECTS.map((d) => ({
-    label: d.label,
-    detail: d.value,
-    picked: d.value === currentDialect,
-  }));
+  await getConfig().update("styleGuide", selected.detail, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(`MarkupAI: Style guide set to "${selected.label}"`);
 
-  const selected = await vscode.window.showQuickPick(items, {
-    title: "Select Dialect",
-    placeHolder: "Choose your preferred English dialect",
-    canPickMany: false,
-  });
-
-  if (selected?.detail) {
-    await getConfig().update("dialect", selected.detail, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`MarkupAI: Dialect set to "${selected.label}"`);
-
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      void checkDocument(editor.document, true);
-    }
+  const editor = vscode.window.activeTextEditor;
+  if (editor) {
+    void checkDocument(editor.document, true);
   }
 }
 
@@ -403,86 +521,52 @@ async function showScoresDialog(): Promise<void> {
     return;
   }
 
-  const scores = diagnosticsManager.getScores(editor.document.uri.toString());
-  if (!scores) {
-    vscode.window.showInformationMessage("No scores available. Run a check first.");
+  const assessment = diagnosticsManager.getAssessment(editor.document.uri.toString());
+  if (!assessment) {
+    vscode.window.showInformationMessage("No results available. Run a check first.");
     return;
   }
 
-  const issues = diagnosticsManager.getIssues(editor.document.uri.toString()) || [];
-  const grammarCount = issues.filter(
-    (i) => i.type === "grammar" || i.category === "grammar",
-  ).length;
-  const consistencyCount = issues.filter(
-    (i) => i.type === "consistency" || i.category === "consistency",
-  ).length;
-  const terminologyCount = issues.filter(
-    (i) => i.type === "terminology" || i.category === "terminology",
-  ).length;
-  const otherCount = issues.length - grammarCount - consistencyCount - terminologyCount;
-
-  const currentStyleGuide = getStyleGuide();
-  const currentDialect = getDialect();
-  const dialectLabel = DIALECTS.find((d) => d.value === currentDialect)?.label || currentDialect;
+  const { risk, score } = assessment;
+  const currentStyleGuideId = getStyleGuideId() || cachedStyleGuides.find((g) => g.isDefault)?.id;
   const styleGuideLabel =
-    cachedStyleGuides.find((g) => g.id === currentStyleGuide)?.name || currentStyleGuide;
+    cachedStyleGuides.find((g) => g.id === currentStyleGuideId)?.name ||
+    currentStyleGuideId ||
+    "Default";
 
-  const items: vscode.QuickPickItem[] = [
-    {
-      label: "Scores",
-      kind: vscode.QuickPickItemKind.Separator,
-    },
-    {
-      label: `${getScoreEmoji(scores.overall)} Overall: ${String(scores.overall)}`,
-      description: `${String(issues.length)} issues`,
-    },
-    {
-      label: `${getScoreEmoji(scores.grammar)} Grammar: ${String(scores.grammar)}`,
-      description: `${String(grammarCount)} issues`,
-    },
-    {
-      label: `${getScoreEmoji(scores.consistency)} Consistency: ${String(scores.consistency)}`,
-      description: `${String(consistencyCount)} issues`,
-    },
-    {
-      label: `${getScoreEmoji(scores.terminology)} Terminology: ${String(scores.terminology)}`,
-      description: `${String(terminologyCount)} issues`,
-    },
-  ];
+  const items: vscode.QuickPickItem[] = [];
 
-  if (otherCount > 0) {
-    items.push({
-      label: `📋 Other: ${String(otherCount)} issues`,
-    });
+  if (typeof score === "number") {
+    items.push(
+      { label: "Score", kind: vscode.QuickPickItemKind.Separator },
+      {
+        label: `${getScoreEmoji(score)} Quality Score: ${String(score)}`,
+        description: `${String(risk.total)} issues`,
+      },
+    );
   }
 
   items.push(
-    {
-      label: "Settings",
-      kind: vscode.QuickPickItemKind.Separator,
-    },
+    { label: "Risk", kind: vscode.QuickPickItemKind.Separator },
+    { label: `🔴 High: ${String(risk.high)}`, description: "issues" },
+    { label: `🟡 Medium: ${String(risk.medium)}`, description: "issues" },
+    { label: `🔵 Low: ${String(risk.low)}`, description: "issues" },
+    { label: "Settings", kind: vscode.QuickPickItemKind.Separator },
     {
       label: "$(gear) Style Guide",
       description: styleGuideLabel,
       detail: "Click to change style guide",
     },
-    {
-      label: "$(globe) Dialect",
-      description: dialectLabel,
-      detail: "Click to change dialect",
-    },
   );
 
   const selected = await vscode.window.showQuickPick(items, {
-    title: "MarkupAI Content Scores",
-    placeHolder: "Content quality scores for current document",
+    title: "MarkupAI Content Assessment",
+    placeHolder: "Risk assessment for current document",
     canPickMany: false,
   });
 
   if (selected?.label.includes("Style Guide")) {
     await selectStyleGuide();
-  } else if (selected?.label.includes("Dialect")) {
-    await selectDialect();
   }
 }
 
@@ -583,6 +667,13 @@ async function checkMultipleFiles(files: vscode.Uri[]): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
   console.log("MarkupAI extension is now active!");
 
+  // Initialize auth
+  auth = new AuthManager(context.secrets, () => ({
+    baseUrl: getApiBaseUrl(),
+    provider: OAUTH_PROVIDER,
+  }));
+  context.subscriptions.push(auth);
+
   // Initialize diagnostic collection
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("markupai");
   context.subscriptions.push(diagnosticCollection);
@@ -591,7 +682,7 @@ export function activate(context: vscode.ExtensionContext) {
   diagnosticsManager = new DiagnosticsManager(diagnosticCollection);
 
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.name = "MarkupAI Score";
+  statusBarItem.name = "MarkupAI";
   context.subscriptions.push(statusBarItem);
   statusBar = new StatusBarManager(statusBarItem);
 
@@ -599,13 +690,6 @@ export function activate(context: vscode.ExtensionContext) {
   isEnabled = getConfig().get("enabled", true);
   vscode.commands.executeCommand("setContext", "markupai.enabled", isEnabled);
   vscode.commands.executeCommand("setContext", "markupai.showAllFiles", true);
-
-  // Fetch style guides on startup
-  if (hasApiToken()) {
-    refreshStyleGuides().catch((error: unknown) => {
-      console.error("MarkupAI: Failed to fetch style guides on startup", error);
-    });
-  }
 
   // Initialize Findings TreeView
   findingsTreeDataProvider = new FindingsTreeDataProvider(() => diagnosticsManager.getAllIssues());
@@ -617,14 +701,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize Folder Scanner TreeView
   folderScannerTreeDataProvider = new FolderScannerTreeDataProvider(() => {
-    const scores = new Map<string, ContentScores>();
+    const assessments = new Map<string, DocumentAssessment>();
     diagnosticsManager.getAllIssues().forEach((_, docKey) => {
-      const s = diagnosticsManager.getScores(docKey);
-      if (s) {
-        scores.set(docKey, s);
+      const a = diagnosticsManager.getAssessment(docKey);
+      if (a) {
+        assessments.set(docKey, a);
       }
     });
-    return scores;
+    return assessments;
   });
   const folderScannerTreeView = vscode.window.createTreeView("markupai.folderScanner", {
     treeDataProvider: folderScannerTreeDataProvider,
@@ -806,14 +890,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.checkAllFiles", async () => {
-      if (!hasApiToken()) {
-        const action = await vscode.window.showWarningMessage(
-          "MarkupAI: API token required",
-          "Configure Token",
-        );
-        if (action === "Configure Token") {
-          await configureApiToken();
-        }
+      if (!(await requireSignIn())) {
         return;
       }
 
@@ -829,14 +906,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.checkSelectedFiles", async () => {
-      if (!hasApiToken()) {
-        const action = await vscode.window.showWarningMessage(
-          "MarkupAI: API token required",
-          "Configure Token",
-        );
-        if (action === "Configure Token") {
-          await configureApiToken();
-        }
+      if (!(await requireSignIn())) {
         return;
       }
 
@@ -954,15 +1024,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("markupai.configureApiToken", configureApiToken),
+    vscode.commands.registerCommand("markupai.signIn", signIn),
+    vscode.commands.registerCommand("markupai.signOut", signOut),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.selectStyleGuide", selectStyleGuide),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("markupai.selectDialect", selectDialect),
   );
 
   context.subscriptions.push(
@@ -1072,18 +1139,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) {
-        const scores = diagnosticsManager.getScores(editor.document.uri.toString());
-        if (scores) {
-          statusBar.update(scores);
-        } else if (hasApiToken()) {
-          void checkDocument(editor.document);
+      void (async () => {
+        if (editor) {
+          const assessment = diagnosticsManager.getAssessment(editor.document.uri.toString());
+          if (assessment) {
+            statusBar.update(assessment);
+          } else if (await auth.isSignedIn()) {
+            void checkDocument(editor.document);
+          } else {
+            statusBar.showSignedOut();
+          }
         } else {
-          statusBar.showNoToken();
+          statusBar.hide();
         }
-      } else {
-        statusBar.hide();
-      }
+      })();
     }),
   );
 
@@ -1108,27 +1177,24 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      if (event.affectsConfiguration("markupai.apiToken")) {
+      if (event.affectsConfiguration("markupai.environment")) {
+        resetSessionCaches();
         void refreshStyleGuides();
       }
     }),
   );
 
   // Initial setup
-  if (hasApiToken()) {
-    void refreshStyleGuides();
-  }
-
-  // Check currently open document on activation
-  if (vscode.window.activeTextEditor) {
-    if (hasApiToken()) {
-      void checkDocument(vscode.window.activeTextEditor.document);
+  void (async () => {
+    if (await auth.isSignedIn()) {
+      void refreshStyleGuides();
+      if (vscode.window.activeTextEditor) {
+        void checkDocument(vscode.window.activeTextEditor.document);
+      }
     } else {
-      statusBar.showNoToken();
+      statusBar.showSignedOut();
     }
-  } else if (!hasApiToken()) {
-    statusBar.showNoToken();
-  }
+  })();
 }
 
 // This method is called when your extension is deactivated

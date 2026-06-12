@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { ContentScores, FolderScannerItem } from "./types";
+import { DocumentAssessment, FolderScannerItem } from "./types";
 import { SUPPORTED_FILE_EXTENSIONS } from "./constants";
-import { getScoreEmoji } from "./utils";
+import { formatRiskSummary, getLeadSeverity, getScoreEmoji, getSeverityEmoji } from "./utils";
 
 const IGNORED_DIRECTORIES = new Set(["node_modules", "dist", "build"]);
 
@@ -22,7 +22,7 @@ export class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<Fo
   private rootFolder: vscode.Uri | null = null;
   private readonly selectedFiles: Set<string> = new Set();
 
-  constructor(private readonly getDocumentScores: () => Map<string, ContentScores>) {
+  constructor(private readonly getDocumentAssessments: () => Map<string, DocumentAssessment>) {
     this.initializeFromWorkspace();
   }
 
@@ -139,11 +139,9 @@ export class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<Fo
       treeItem.resourceUri = element.uri;
 
       const docKey = element.uri.toString();
-      const documentScores = this.getDocumentScores();
-      const score = documentScores.get(docKey);
-      if (score) {
-        const emoji = getScoreEmoji(score.overall);
-        treeItem.description = `${emoji} ${String(score.overall)}`;
+      const assessment = this.getDocumentAssessments().get(docKey);
+      if (assessment) {
+        treeItem.description = describeAssessment(assessment);
       }
 
       treeItem.command = {
@@ -226,4 +224,15 @@ export class FolderScannerTreeDataProvider implements vscode.TreeDataProvider<Fo
 
     return items;
   }
+}
+
+function describeAssessment(assessment: DocumentAssessment): string {
+  if (typeof assessment.score === "number") {
+    return `${getScoreEmoji(assessment.score)} ${String(assessment.score)}`;
+  }
+  const { risk } = assessment;
+  if (risk.total === 0) {
+    return "✅";
+  }
+  return `${getSeverityEmoji(getLeadSeverity(risk))} ${formatRiskSummary(risk)}`;
 }
