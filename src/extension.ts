@@ -10,6 +10,7 @@ import {
   getConfig,
   getApiBaseUrl,
   getStyleGuideId,
+  isSidebarMode,
   getScoreEmoji,
   getSeverityEmoji,
   getLeadSeverity,
@@ -20,6 +21,8 @@ import {
   SUPPORTED_SCHEMES,
 } from "./utils";
 import { DiagnosticsManager } from "./diagnosticsManager";
+import { SidebarViewProvider } from "./sidebar/sidebarViewProvider";
+import { SidebarBridge } from "./sidebar/sidebarBridge";
 import { StatusBarManager } from "./statusBarManager";
 import { FindingsTreeDataProvider } from "./findingsTreeProvider";
 import { FolderScannerTreeDataProvider } from "./folderScannerProvider";
@@ -205,6 +208,10 @@ async function checkDocument(
   showProgress: boolean = false,
   showCompletionNotification: boolean = true,
 ): Promise<void> {
+  if (isSidebarMode()) {
+    return;
+  }
+
   if (!isExtensionEnabled()) {
     diagnosticsManager.clearForDocument(document.uri);
     statusBar.update(null);
@@ -667,6 +674,21 @@ async function checkMultipleFiles(files: vscode.Uri[]): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
   console.log("MarkupAI extension is now active!");
 
+  const extensionVersion =
+    (context.extension.packageJSON as { version?: string }).version ?? "0.0.0";
+
+  // Sidebar mode: webview view hosting the MarkupAI sidebar app
+  const sidebarBridge = new SidebarBridge();
+  sidebarBridge.trackEditor(vscode.window.activeTextEditor);
+  context.subscriptions.push(
+    sidebarBridge,
+    vscode.window.registerWebviewViewProvider(
+      SidebarViewProvider.viewType,
+      new SidebarViewProvider(context.extensionUri, extensionVersion, sidebarBridge),
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
+  );
+
   // Initialize auth
   auth = new AuthManager(context.secrets, () => ({
     baseUrl: getApiBaseUrl(),
@@ -1026,6 +1048,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("markupai.signIn", signIn),
     vscode.commands.registerCommand("markupai.signOut", signOut),
+    vscode.commands.registerCommand("markupai.switchMode", async () => {
+      const next = isSidebarMode() ? "native" : "sidebar";
+      await getConfig().update("mode", next, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(`MarkupAI: switched to ${next} mode.`);
+    }),
   );
 
   context.subscriptions.push(
@@ -1127,6 +1154,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((document) => {
+      sidebarBridge.handleDocumentClosed(document.uri);
       diagnosticsManager.clearForDocument(document.uri);
       findingsTreeDataProvider.refresh();
       const timer = checkDebounceTimers.get(document.uri.toString());
@@ -1139,7 +1167,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      sidebarBridge.trackEditor(editor);
       void (async () => {
+        if (isSidebarMode()) {
+          statusBar.showSidebarMode();
+          return;
+        }
         if (editor) {
           const assessment = diagnosticsManager.getAssessment(editor.document.uri.toString());
           if (assessment) {
@@ -1181,11 +1214,38 @@ export function activate(context: vscode.ExtensionContext) {
         resetSessionCaches();
         void refreshStyleGuides();
       }
+
+      if (event.affectsConfiguration("markupai.mode")) {
+        if (isSidebarMode()) {
+          // Native artifacts are meaningless in sidebar mode.
+          diagnosticsManager.clearAll();
+          findingsTreeDataProvider.refresh();
+          statusBar.showSidebarMode();
+        } else {
+          void (async () => {
+            if (await auth.isSignedIn()) {
+              void refreshStyleGuides();
+              const editor = vscode.window.activeTextEditor;
+              if (editor) {
+                void checkDocument(editor.document);
+              } else {
+                statusBar.hide();
+              }
+            } else {
+              statusBar.showSignedOut();
+            }
+          })();
+        }
+      }
     }),
   );
 
   // Initial setup
   void (async () => {
+    if (isSidebarMode()) {
+      statusBar.showSidebarMode();
+      return;
+    }
     if (await auth.isSignedIn()) {
       void refreshStyleGuides();
       if (vscode.window.activeTextEditor) {
