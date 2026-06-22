@@ -84,7 +84,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.3",
     "@types/vscode": "^1.120.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "@vitest/ui": "^4.1.8",
     "@vscode/test-web": "^0.0.80",
     "@vscode/vsce": "^3.9.2",
