@@ -1,8 +1,8 @@
 {
   "name": "vscode-markupai",
-  "displayName": "MarkupAI",
+  "displayName": "Markup AI",
   "version": "0.0.1",
-  "description": "Real-time content analysis in VS Code. Ensure your writing is clear, on-brand, and compliant with instant feedback as you type.",
+  "description": "Markup AI in VS Code: a sidebar panel that checks the active document (or your selection), highlights issues in the editor, and applies suggestions inline.",
   "categories": [
     "Linters",
     "Other"
@@ -35,162 +35,9 @@
     "watch": "npm run compile:watch"
   },
   "contributes": {
-    "commands": [
-      {
-        "command": "markupai.switchMode",
-        "title": "Switch Between Sidebar and Native Mode",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.signIn",
-        "title": "Sign In",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.signOut",
-        "title": "Sign Out",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.checkContent",
-        "title": "MarkupAI - Check Content",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.toggleEnabled",
-        "title": "Toggle Enable/Disable",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.enableIssues",
-        "title": "MarkupAI - Enable Issues",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.disableIssues",
-        "title": "MarkupAI - Disable Issues",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.disableCategory",
-        "title": "MarkupAI - Disable Category",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.enableCategory",
-        "title": "MarkupAI - Enable Category",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.showScores",
-        "title": "Show Content Scores",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.selectStyleGuide",
-        "title": "Select Style Guide",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.goToIssue",
-        "title": "Go to Issue",
-        "category": "MarkupAI"
-      },
-      {
-        "command": "markupai.filterBySeverity",
-        "title": "Filter by Severity",
-        "category": "MarkupAI",
-        "icon": "$(filter)"
-      },
-      {
-        "command": "markupai.filterByCategory",
-        "title": "Filter by Category",
-        "category": "MarkupAI",
-        "icon": "$(tag)"
-      },
-      {
-        "command": "markupai.clearFilters",
-        "title": "Clear Filters",
-        "category": "MarkupAI",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "markupai.refreshFindings",
-        "title": "Refresh Findings",
-        "category": "MarkupAI",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "markupai.showAllFindings",
-        "title": "Show All Files",
-        "category": "MarkupAI",
-        "icon": "$(files)"
-      },
-      {
-        "command": "markupai.showCurrentFileFindings",
-        "title": "Show Current File Only",
-        "category": "MarkupAI",
-        "icon": "$(file)"
-      },
-      {
-        "command": "markupai.selectFolder",
-        "title": "Change Folder",
-        "category": "MarkupAI",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "markupai.refreshFolderScanner",
-        "title": "Refresh Folder Scanner",
-        "category": "MarkupAI",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "markupai.checkAllFiles",
-        "title": "Check All Files",
-        "category": "MarkupAI",
-        "icon": "$(run-all)"
-      },
-      {
-        "command": "markupai.checkSelectedFiles",
-        "title": "Check Selected Files",
-        "category": "MarkupAI",
-        "icon": "$(run)"
-      },
-      {
-        "command": "markupai.toggleFileSelection",
-        "title": "Toggle File Selection",
-        "category": "MarkupAI",
-        "icon": "$(check)"
-      },
-      {
-        "command": "markupai.openFile",
-        "title": "Open File",
-        "category": "MarkupAI"
-      }
-    ],
     "configuration": {
-      "title": "MarkupAI",
+      "title": "Markup AI",
       "properties": {
-        "markupai.checkDelay": {
-          "type": "number",
-          "default": 2000,
-          "description": "Delay in milliseconds before checking after a document change"
-        },
-        "markupai.checkOnChange": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically re-check content when the document changes. Enable this for real-time score updates while editing. Disable to save API calls (recommended)."
-        },
-        "markupai.checkOnOpen": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically check content when a file is opened"
-        },
-        "markupai.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable or disable MarkupAI checking"
-        },
         "markupai.environment": {
           "type": "string",
           "default": "prod",
@@ -202,184 +49,17 @@
             "Production (api.markup.ai)",
             "Development (api.dev.markup.ai)"
           ],
-          "description": "MarkupAI API environment."
-        },
-        "markupai.mode": {
-          "type": "string",
-          "default": "sidebar",
-          "enum": [
-            "sidebar",
-            "native"
-          ],
-          "enumDescriptions": [
-            "Sidebar panel with its own sign-in and check configuration",
-            "Inline diagnostics, findings panel, and batch folder checking"
-          ],
-          "description": "How MarkupAI checks are presented. Sidebar and native modes are mutually exclusive."
-        },
-        "markupai.styleGuide": {
-          "type": "string",
-          "default": "",
-          "description": "Style guide ID to check against. Leave empty to use your organization's default. Use the 'MarkupAI: Select Style Guide' command to pick one."
+          "description": "Markup AI API environment."
         }
       }
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "markupai.refreshFindings",
-          "when": "view == markupai.findings",
-          "group": "navigation@1"
-        },
-        {
-          "command": "markupai.filterBySeverity",
-          "when": "view == markupai.findings",
-          "group": "navigation@2"
-        },
-        {
-          "command": "markupai.filterByCategory",
-          "when": "view == markupai.findings",
-          "group": "navigation@3"
-        },
-        {
-          "command": "markupai.clearFilters",
-          "when": "view == markupai.findings",
-          "group": "navigation@4"
-        },
-        {
-          "command": "markupai.showAllFindings",
-          "when": "view == markupai.findings && !markupai.showAllFiles",
-          "group": "navigation@5"
-        },
-        {
-          "command": "markupai.showCurrentFileFindings",
-          "when": "view == markupai.findings && markupai.showAllFiles",
-          "group": "navigation@5"
-        },
-        {
-          "command": "markupai.selectFolder",
-          "when": "view == markupai.folderScanner",
-          "group": "navigation@1"
-        },
-        {
-          "command": "markupai.refreshFolderScanner",
-          "when": "view == markupai.folderScanner",
-          "group": "navigation@2"
-        },
-        {
-          "command": "markupai.checkAllFiles",
-          "when": "view == markupai.folderScanner",
-          "group": "navigation@3"
-        },
-        {
-          "command": "markupai.checkSelectedFiles",
-          "when": "view == markupai.folderScanner",
-          "group": "navigation@4"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "markupai.toggleFileSelection",
-          "when": "view == markupai.folderScanner && viewItem == file",
-          "group": "inline@1"
-        },
-        {
-          "command": "markupai.toggleFileSelection",
-          "when": "view == markupai.folderScanner && viewItem == file",
-          "group": "1_selection@1"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "markupai.checkContent",
-          "group": "markupai@1",
-          "when": "config.markupai.mode == 'native' && editorTextFocus && markupai.enabled"
-        },
-        {
-          "command": "markupai.disableIssues",
-          "group": "markupai@2",
-          "when": "config.markupai.mode == 'native' && editorTextFocus && markupai.enabled"
-        },
-        {
-          "command": "markupai.enableIssues",
-          "group": "markupai@2",
-          "when": "config.markupai.mode == 'native' && editorTextFocus && !markupai.enabled"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "markupai.checkContent",
-          "when": "config.markupai.mode == 'native' && editorIsOpen"
-        },
-        {
-          "command": "markupai.toggleEnabled",
-          "when": "config.markupai.mode == 'native'"
-        },
-        {
-          "command": "markupai.enableIssues",
-          "when": "config.markupai.mode == 'native' && !markupai.enabled"
-        },
-        {
-          "command": "markupai.disableIssues",
-          "when": "config.markupai.mode == 'native' && markupai.enabled"
-        },
-        {
-          "command": "markupai.enableCategory",
-          "when": "config.markupai.mode == 'native' && markupai.enabled"
-        },
-        {
-          "command": "markupai.disableCategory",
-          "when": "false"
-        },
-        {
-          "command": "markupai.showScores",
-          "when": "config.markupai.mode == 'native' && editorIsOpen"
-        },
-        {
-          "command": "markupai.selectStyleGuide",
-          "when": "config.markupai.mode == 'native'"
-        },
-        {
-          "command": "markupai.goToIssue",
-          "when": "false"
-        },
-        {
-          "command": "markupai.signIn",
-          "when": "config.markupai.mode == 'native'"
-        },
-        {
-          "command": "markupai.signOut",
-          "when": "config.markupai.mode == 'native'"
-        },
-        {
-          "command": "markupai.switchMode"
-        }
-      ]
     },
     "views": {
       "markupai-sidebar": [
         {
-          "id": "markupai.folderScanner",
-          "name": "Folder Scanner",
-          "type": "tree",
-          "contextualTitle": "MarkupAI Folder Scanner",
-          "when": "config.markupai.mode == 'native'"
-        },
-        {
           "id": "markupai.sidebar",
           "name": "Sidebar",
           "type": "webview",
-          "contextualTitle": "MarkupAI Sidebar",
-          "when": "config.markupai.mode == 'sidebar'"
-        }
-      ],
-      "markupai-panel": [
-        {
-          "id": "markupai.findings",
-          "name": "Findings",
-          "type": "tree",
-          "contextualTitle": "MarkupAI Findings",
-          "when": "config.markupai.mode == 'native'"
+          "contextualTitle": "Markup AI Sidebar"
         }
       ]
     },
@@ -387,33 +67,18 @@
       "activitybar": [
         {
           "id": "markupai-sidebar",
-          "title": "MarkupAI",
+          "title": "Markup AI",
           "icon": "assets/markup-icon-activitybar.svg"
         }
-      ],
-      "panel": [
-        {
-          "id": "markupai-panel",
-          "title": "MarkupAI",
-          "icon": "$(checklist)"
-        }
       ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "markupai.folderScanner",
-        "contents": "No folder open.\n\nOpen a folder to scan documents for writing issues.\n\n[Open Folder](command:vscode.openFolder)\n\nOr select a specific folder:\n[Select Folder](command:markupai.selectFolder)",
-        "when": "workspaceFolderCount == 0"
-      }
-    ]
+    }
   },
   "activationEvents": [
     "onStartupFinished"
   ],
   "dependencies": {
     "@markupai/format-offset-mapper": "^1.1.8",
-    "@markupai/sidebar-adapter": "^1.3.1",
-    "diff-match-patch-ts": "^0.8.0"
+    "@markupai/sidebar-adapter": "^1.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
