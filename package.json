@@ -7,9 +7,12 @@
     "Linters",
     "Other"
   ],
+  "bugs": {
+    "url": "https://github.com/markupai/vscode-extension-sidebar/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/markupai/vscode-extension"
+    "url": "https://github.com/markupai/vscode-extension-sidebar"
   },
   "license": "Apache-2.0",
   "publisher": "markupai",

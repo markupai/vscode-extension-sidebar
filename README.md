@@ -38,7 +38,7 @@ Sign-in is handled inside the sidebar panel; no token settings are stored by the
 
 ## Requirements
 
-- VS Code 1.120.0 or higher (Desktop or Remote)
+- VS Code 1.105.1 or higher (Desktop or Remote)
 - A Markup AI account ([markup.ai](https://markup.ai))
 
 ## Development
