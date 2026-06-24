@@ -4,6 +4,12 @@ The Markup AI sidebar for VS Code — a panel that opens from the activity bar, 
 
 > Looking for native, editor-integrated checking (inline diagnostics, quick fixes, a findings panel, batch folder scanning)? That ships as the separate **Markup AI Lint** extension.
 
+## Prerequisites
+
+To use Markup AI for VS Code, you need a Markup AI account. Once the extension is installed, sign in from inside the sidebar panel to start checking your content.
+
+This extension isn't a stand-alone authoring tool — it works only with the Markup AI platform. To procure the Markup AI solution, please visit [markup.ai/pricing](https://markup.ai/pricing/).
+
 ## Features
 
 - **Sidebar panel** — opens from the Markup AI icon in the activity bar
@@ -16,7 +22,7 @@ The Markup AI sidebar for VS Code — a panel that opens from the activity bar, 
 
 ### 1. Install the Extension
 
-Install from the VS Code Marketplace or build from source.
+Install from the VS Code Marketplace.
 
 ### 2. Open the Sidebar
 
@@ -38,27 +44,8 @@ Sign-in is handled inside the sidebar panel; no token settings are stored by the
 
 ## Requirements
 
-- VS Code 1.120.0 or higher (Desktop or Remote)
-- A Markup AI account ([markup.ai](https://markup.ai))
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Compile (extension host + web + sidebar webview bundles)
-npm run compile
-
-# Run tests
-npm test
-
-# Run linter
-npm run lint:check
-
-# Package extension
-npm run package
-```
+- VS Code 1.105.1 or higher (Desktop or Remote)
+- A Markup AI account — see [Prerequisites](#prerequisites)
 
 ## Support
 

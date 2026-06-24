@@ -1,15 +1,30 @@
 {
   "name": "vscode-markupai",
   "displayName": "Markup AI",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Markup AI in VS Code: a sidebar panel that checks the active document (or your selection), highlights issues in the editor, and applies suggestions inline.",
   "categories": [
     "Linters",
     "Other"
   ],
+  "keywords": [
+    "markup ai",
+    "style guide",
+    "writing",
+    "linter",
+    "grammar",
+    "proofreading",
+    "content",
+    "documentation",
+    "markdown",
+    "dita"
+  ],
+  "bugs": {
+    "url": "https://github.com/markupai/vscode-extension-sidebar/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/markupai/vscode-extension"
+    "url": "https://github.com/markupai/vscode-extension-sidebar"
   },
   "license": "Apache-2.0",
   "publisher": "markupai",
@@ -106,5 +121,6 @@
     "untrustedWorkspaces": {
       "supported": true
     }
-  }
+  },
+  "pricing": "Free"
 }
