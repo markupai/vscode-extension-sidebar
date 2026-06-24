@@ -10,8 +10,8 @@ run-name: "Release ${{ github.ref_name }} → VS Code Marketplace & Open VSX"
 #     `repo:markupai/vscode-extension-sidebar:environment:release`
 #   - that service principal granted the Contributor role on the `markupai`
 #     Marketplace publisher
-#   - repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID (plain IDs, not secrets),
-#     and OPEN_VSX_TOKEN (Eclipse token; optional — Open VSX is skipped if unset)
+#   - environment variables (non-secret IDs): AZURE_CLIENT_ID, AZURE_TENANT_ID
+#   - environment secret: OPEN_VSX_TOKEN (Eclipse token; Open VSX is skipped if unset)
 #
 # Once that is in place, publishing is "just run this workflow" (or push a v* tag).
 
@@ -84,8 +84,8 @@ jobs:
       - name: Azure login (OIDC → Entra ID)
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
           # The CI service principal only has a role on the Marketplace publisher,
           # not on any Azure subscription — without this, `az login` fails with
           # "no subscriptions found".
