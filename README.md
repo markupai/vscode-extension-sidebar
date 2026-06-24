@@ -22,7 +22,7 @@ This extension isn't a stand-alone authoring tool — it works only with the Mar
 
 ### 1. Install the Extension
 
-Install from the VS Code Marketplace, or from the [Open VSX Registry](https://open-vsx.org) for Cursor and other VS Code–compatible editors.
+Install from the VS Code Marketplace.
 
 ### 2. Open the Sidebar
 
