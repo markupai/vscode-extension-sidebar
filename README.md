@@ -34,13 +34,7 @@ Open a supported document (Markdown, plain text, HTML, DITA/XML), then run a che
 
 ## Configuration
 
-Access settings via `File > Preferences > Settings` and search for "Markup AI":
-
-| Setting                | Description                       | Default |
-| ---------------------- | --------------------------------- | ------- |
-| `markupai.environment` | API environment (`prod` or `dev`) | `prod`  |
-
-Sign-in is handled inside the sidebar panel; no token settings are stored by the extension.
+Markup AI works out of the box — there are no required settings. Sign-in is handled inside the sidebar panel; no tokens or settings are stored by the extension.
 
 ## Requirements
 

@@ -5,6 +5,13 @@ All notable changes to the Markup AI sidebar extension are documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-25
+
+### Removed
+
+- The API environment setting. Markup AI now always connects to the production API, so no
+  user configuration is required.
+
 ## [0.2.0] - 2026-06-25
 
 ### Added
@@ -27,4 +34,3 @@ Initial public release.
 - Inline suggestions — apply a single suggestion or apply all directly to the document.
 - Self-contained sign-in, sign-out, and style-guide selection from inside the panel.
 - Support for Markdown, plain text, HTML, and DITA/XML documents.
-- `markupai.environment` setting to switch between the `prod` and `dev` API environments.
