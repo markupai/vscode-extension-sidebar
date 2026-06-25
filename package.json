@@ -1,7 +1,7 @@
 {
   "name": "vscode-markupai",
   "displayName": "Markup AI",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Markup AI in VS Code: a sidebar panel that checks the active document (or your selection), highlights issues in the editor, and applies suggestions inline.",
   "categories": [
     "Linters",
@@ -50,24 +50,6 @@
     "watch": "npm run compile:watch"
   },
   "contributes": {
-    "configuration": {
-      "title": "Markup AI",
-      "properties": {
-        "markupai.environment": {
-          "type": "string",
-          "default": "prod",
-          "enum": [
-            "prod",
-            "dev"
-          ],
-          "enumDescriptions": [
-            "Production (api.markup.ai)",
-            "Development (api.dev.markup.ai)"
-          ],
-          "description": "Markup AI API environment."
-        }
-      }
-    },
     "views": {
       "markupai-sidebar": [
         {

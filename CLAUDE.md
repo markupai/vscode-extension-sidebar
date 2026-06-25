@@ -44,6 +44,9 @@ sidebar iframe  ⇄  webview host script  ⇄  extension host (bridge)
 - **`src/constants.ts`** — environment URLs (`SIDEBAR_URLS`, `AUTH_URLS`) and the
   `vscode-extension` integration identity used for mediation OAuth.
 - **`src/utils.ts`** — small config helpers (`getConfig`, `getEnvironment`, `isSupportedScheme`).
+  `getEnvironment` returns `prod` for everyone; `dev` is a development-only override via the
+  `MARKUPAI_ENV=dev` environment variable (set when launching the extension host) — it is not a
+  user-facing setting.
 
 ### Key invariants
 
@@ -76,9 +79,9 @@ host, and the webview IIFE script. The webview script runs in the DOM, not the e
 - TypeScript, ESM. Format with Prettier (`prettier-plugin-packagejson` orders `package.json`).
 - Tests are Vitest with a hand-written VS Code mock in `test/mocks/vscode.ts` — extend the
   mock rather than reaching for the real `vscode` module.
-- Config, command, and view ids use the `markupai.*` namespace (e.g. `markupai.sidebar`,
-  container `markupai-sidebar`, setting `markupai.environment`). Keep them distinct from the
-  `markupai-lint.*` namespace used by the Lint extension so both can coexist.
+- Config, command, and view ids use the `markupai.*` namespace (e.g. view `markupai.sidebar`,
+  container `markupai-sidebar`). Keep them distinct from the `markupai-lint.*` namespace used by
+  the Lint extension so both can coexist.
 - The Sonar project for this repo is `markupai_vscode-extension-sidebar`
   (`sonar-project.properties`). `src/extension.ts` and `src/webview/sidebarHost.ts` are
   coverage-excluded — they're activation/DOM glue that isn't meaningfully unit-tested.

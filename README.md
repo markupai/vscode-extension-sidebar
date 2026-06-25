@@ -32,16 +32,6 @@ Click the **Markup AI** icon in the activity bar, then sign in from within the p
 
 Open a supported document (Markdown, plain text, HTML, DITA/XML), then run a check from the panel. Click any issue to jump to it in the editor, and apply suggestions inline.
 
-## Configuration
-
-Access settings via `File > Preferences > Settings` and search for "Markup AI":
-
-| Setting                | Description                       | Default |
-| ---------------------- | --------------------------------- | ------- |
-| `markupai.environment` | API environment (`prod` or `dev`) | `prod`  |
-
-Sign-in is handled inside the sidebar panel; no token settings are stored by the extension.
-
 ## Requirements
 
 - VS Code 1.105.1 or higher (Desktop or Remote)
