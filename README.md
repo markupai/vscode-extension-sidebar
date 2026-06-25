@@ -32,10 +32,6 @@ Click the **Markup AI** icon in the activity bar, then sign in from within the p
 
 Open a supported document (Markdown, plain text, HTML, DITA/XML), then run a check from the panel. Click any issue to jump to it in the editor, and apply suggestions inline.
 
-## Configuration
-
-Markup AI works out of the box — there are no required settings. Sign-in is handled inside the sidebar panel; no tokens or settings are stored by the extension.
-
 ## Requirements
 
 - VS Code 1.105.1 or higher (Desktop or Remote)
