@@ -96,13 +96,21 @@ jobs:
 
       - name: Ensure Open VSX namespace exists
         if: ${{ env.OPEN_VSX_TOKEN != '' }}
-        # Idempotent: creating an existing namespace errors, which we swallow.
-        # It runs with the CI token, so the namespace is owned by the same
-        # account that publishes below — the only identity ovsx will accept.
-        # Real auth / Publisher-Agreement problems still surface at publish time.
+        # Check before create: Open VSX returns 200 if the namespace exists, 404
+        # if not. We only create when it is genuinely missing, so this is safe to
+        # run on every release AND a real create failure (bad token, unsigned
+        # Eclipse Publisher Agreement, name owned by another account) fails loudly
+        # here instead of being masked. It runs with the CI token, so the
+        # namespace is owned by the same account that publishes below.
         run: |
           publisher="$(node -p "require('./package.json').publisher")"
-          npx --no-install ovsx create-namespace "$publisher" --pat "$OPEN_VSX_TOKEN" || true
+          status="$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/${publisher}")"
+          if [ "$status" = "200" ]; then
+            echo "Open VSX namespace '${publisher}' already exists — skipping creation."
+          else
+            echo "Open VSX namespace '${publisher}' not found (HTTP ${status}) — creating..."
+            npx --no-install ovsx create-namespace "$publisher" --pat "$OPEN_VSX_TOKEN"
+          fi
 
       - name: Publish to Open VSX
         if: ${{ env.OPEN_VSX_TOKEN != '' }}
