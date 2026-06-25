@@ -94,6 +94,16 @@ jobs:
       - name: Publish to VS Code Marketplace
         run: npx --no-install @vscode/vsce publish --azure-credential --packagePath "${{ steps.package.outputs.vsix }}"
 
+      - name: Ensure Open VSX namespace exists
+        if: ${{ env.OPEN_VSX_TOKEN != '' }}
+        # Idempotent: creating an existing namespace errors, which we swallow.
+        # It runs with the CI token, so the namespace is owned by the same
+        # account that publishes below — the only identity ovsx will accept.
+        # Real auth / Publisher-Agreement problems still surface at publish time.
+        run: |
+          publisher="$(node -p "require('./package.json').publisher")"
+          npx --no-install ovsx create-namespace "$publisher" --pat "$OPEN_VSX_TOKEN" || true
+
       - name: Publish to Open VSX
         if: ${{ env.OPEN_VSX_TOKEN != '' }}
         run: npx --no-install ovsx publish "${{ steps.package.outputs.vsix }}" --pat "$OPEN_VSX_TOKEN"
