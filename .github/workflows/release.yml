@@ -1,5 +1,4 @@
 name: Release
-
 run-name: "Release ${{ github.ref_name }} → VS Code Marketplace & Open VSX"
 
 # Publishes the extension from CI — never from a developer machine.
