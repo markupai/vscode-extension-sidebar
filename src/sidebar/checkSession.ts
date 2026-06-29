@@ -114,6 +114,12 @@ export class CheckSessionStore {
   private readonly sessions = new Map<string, CheckSession>();
 
   set(session: CheckSession): void {
+    // Delete first so a re-check of an already-tracked document moves its
+    // entry to the end of the Map. Map.set on an existing key keeps the
+    // original insertion position, which would make getLatest() return a
+    // stale document's session — and card actions would then resolve ranges
+    // against the wrong document.
+    this.sessions.delete(session.uri);
     this.sessions.set(session.uri, session);
   }
 

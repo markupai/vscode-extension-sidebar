@@ -156,6 +156,17 @@ describe("CheckSessionStore", () => {
     store.set(b);
     expect(store.getLatest()).toBe(b);
   });
+
+  it("treats a re-check of an earlier document as the latest", () => {
+    const store = new CheckSessionStore();
+    const a1 = new CheckSession("file:///a.md", "aaa", 1, 0, 3);
+    const b = new CheckSession("file:///b.md", "bbb", 1, 0, 3);
+    const a2 = new CheckSession("file:///a.md", "aaaa", 2, 0, 4);
+    store.set(a1); // check A
+    store.set(b); // check B
+    store.set(a2); // re-check A — this is now the most recent check
+    expect(store.getLatest()).toBe(a2);
+  });
 });
 
 describe("findNearestOccurrence", () => {

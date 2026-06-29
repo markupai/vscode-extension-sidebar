@@ -27,6 +27,9 @@ sonar-project.properties
 CLAUDE.md
 vsc-extension-quickstart.md
 
+# Demo GIF is referenced from the README by absolute raw URL — no need to ship it
+assets/markupai-demo.gif
+
 # Test fixtures & generated output
 testdoc/**
 coverage/**

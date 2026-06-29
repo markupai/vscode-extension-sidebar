@@ -2,6 +2,8 @@
 
 The Markup AI sidebar for VS Code — a panel that opens from the activity bar, checks the active document (or just your selection) with the Markup AI Style Agent, highlights flagged text in the editor, and applies suggestions directly to your document.
 
+![Markup AI sidebar in VS Code: run a check, then highlight flagged text and apply suggestions inline](https://raw.githubusercontent.com/markupai/vscode-extension-sidebar/main/assets/markupai-demo.gif)
+
 > Looking for native, editor-integrated checking (inline diagnostics, quick fixes, a findings panel, batch folder scanning)? That ships as the separate **Markup AI Lint** extension.
 
 ## Prerequisites
