@@ -5,6 +5,13 @@ All notable changes to the Markup AI sidebar extension are documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-29
+
+### Fixed
+
+- Highlighting or applying a suggestion could act on the wrong document after a check was
+  re-run on a previously checked file. The most recently checked document is now always used.
+
 ## [0.3.0] - 2026-06-25
 
 ### Removed

@@ -1,7 +1,7 @@
 {
   "name": "vscode-markupai",
   "displayName": "Markup AI",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Markup AI in VS Code: a sidebar panel that checks the active document (or your selection), highlights issues in the editor, and applies suggestions inline.",
   "categories": [
     "Linters",
