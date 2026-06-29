@@ -93,6 +93,17 @@ describe("utils", () => {
       process.env.MARKUPAI_ENV = "staging";
       expect(utils.getEnvironment()).toBe("prod");
     });
+
+    it("uses the build-time __MARKUPAI_ENV__ when process.env is unset (web host)", () => {
+      delete process.env.MARKUPAI_ENV;
+      const g = globalThis as Record<string, unknown>;
+      g.__MARKUPAI_ENV__ = "dev";
+      try {
+        expect(utils.getEnvironment()).toBe("dev");
+      } finally {
+        delete g.__MARKUPAI_ENV__;
+      }
+    });
   });
 
   describe("getApiBaseUrl", () => {
@@ -255,6 +266,10 @@ describe("utils", () => {
 
     it("should return true for vscode-remote scheme", () => {
       expect(utils.isSupportedScheme("vscode-remote")).toBe(true);
+    });
+
+    it("should return true for vscode-test-web scheme", () => {
+      expect(utils.isSupportedScheme("vscode-test-web")).toBe(true);
     });
 
     it("should return false for unsupported schemes", () => {
