@@ -52,6 +52,12 @@ const webOptions = {
   platform: "browser",
   format: "cjs",
   outfile: "out/web/extension.js",
+  // The web extension host has no `process.env`, so bake MARKUPAI_ENV in at
+  // build time — this lets a local dev build target the dev sidebar. Forced
+  // empty (prod) for production packages so a stray env can never ship.
+  define: {
+    __MARKUPAI_ENV__: JSON.stringify(isProduction ? "" : (process.env.MARKUPAI_ENV ?? "")),
+  },
 };
 
 /** Sidebar webview script — runs in the webview DOM, not the extension host. */

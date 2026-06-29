@@ -17,6 +17,20 @@
       "preLaunchTask": "${defaultBuildTask}"
     },
     {
+      "name": "Run Extension (dev sidebar)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/testdoc/f1/sample.md"
+      ],
+      "env": {
+        "MARKUPAI_ENV": "dev"
+      },
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
       "name": "Run Web Extension",
       "type": "extensionHost",
       "debugPort": 9222,
