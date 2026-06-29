@@ -7,8 +7,6 @@ import { SidebarBridge } from "./sidebar/sidebarBridge";
 // ============================================================================
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log("Markup AI extension is now active!");
-
   const extensionVersion =
     (context.extension.packageJSON as { version?: string }).version ?? "0.0.0";
 
