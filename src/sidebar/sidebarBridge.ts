@@ -75,7 +75,7 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
         // any frame that is not on the vscode-webview:// origin.
         const text = args[0];
         if (typeof text !== "string") {
-          throw new Error("Invalid clipboard text");
+          throw new TypeError("Invalid clipboard text");
         }
         await vscode.env.clipboard.writeText(text);
         return undefined;
