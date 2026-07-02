@@ -118,6 +118,12 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
     // the Auth0 authorize URL via vscode.env.openExternal.
     openAuthUrl: (url: string) => rpcVoid("openAuthUrl", [url]),
 
+    // The sidebar iframe cannot use the async clipboard API itself — VS
+    // Code's Electron permission handler denies clipboard-write to frames
+    // off the vscode-webview:// origin — so the app delegates the write to
+    // the extension host (vscode.env.clipboard).
+    copyToClipboard: (text: string) => rpcVoid("copyToClipboard", [text]),
+
     // VS Code has no host-rendered dialog surface; the sidebar is configured
     // with useCheckPreviewDialog: false so these are never exercised.
     showDialog: () => Promise.reject(new Error("Dialogs are not supported in VS Code")),
