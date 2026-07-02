@@ -69,6 +69,17 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
         await vscode.env.openExternal(vscode.Uri.parse(url));
         return undefined;
       }
+      case "copyToClipboard": {
+        // The sidebar iframe cannot use the async clipboard API itself:
+        // VS Code's Electron permission handler denies clipboard-write to
+        // any frame that is not on the vscode-webview:// origin.
+        const text = args[0];
+        if (typeof text !== "string") {
+          throw new Error("Invalid clipboard text");
+        }
+        await vscode.env.clipboard.writeText(text);
+        return undefined;
+      }
       default:
         throw new Error(`Unsupported sidebar request: ${method}`);
     }

@@ -286,6 +286,22 @@ describe("SidebarBridge", () => {
     });
   });
 
+  describe("copyToClipboard", () => {
+    it("writes text to the clipboard via the extension host", async () => {
+      const writeText = vi.spyOn(vscode.env.clipboard, "writeText");
+      await bridge.handle("copyToClipboard", ["workflow-123"]);
+      expect(writeText).toHaveBeenCalledWith("workflow-123");
+    });
+
+    it("rejects non-string payloads", async () => {
+      const writeText = vi.spyOn(vscode.env.clipboard, "writeText");
+      await expect(bridge.handle("copyToClipboard", [42])).rejects.toThrow(
+        "Invalid clipboard text",
+      );
+      expect(writeText).not.toHaveBeenCalled();
+    });
+  });
+
   describe("uncovered branches", () => {
     it("maps unknown extensions to text/plain", async () => {
       const editor = makeEditor(TEXT, "/notes.xyz");

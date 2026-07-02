@@ -383,9 +383,11 @@ export const languages = {
 export const env: {
   uiKind: UIKind;
   openExternal: (uri: Uri) => Thenable<boolean>;
+  clipboard: { writeText: (text: string) => Thenable<void> };
 } = {
   uiKind: UIKind.Desktop,
   openExternal: vi.fn(() => Promise.resolve(true)),
+  clipboard: { writeText: vi.fn(() => Promise.resolve()) },
 };
 
 // Mock commands
