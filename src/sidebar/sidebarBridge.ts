@@ -41,10 +41,19 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
     }
   }
 
-  /** Forget state for a closed document. */
+  /** Update state for a closed document. */
   handleDocumentClosed(uri: vscode.Uri): void {
-    this.sessions.delete(uri.toString());
-    if (this.lastEditor?.document.uri.toString() === uri.toString()) {
+    const key = uri.toString();
+    if (uri.scheme === "untitled") {
+      // An untitled document's content is gone for good; nothing to reopen.
+      this.sessions.delete(key);
+    } else {
+      // Keep the session — a later card click reopens the document by URI.
+      // Version numbering restarts on reopen, so the session must stop
+      // trusting version equality.
+      this.sessions.get(key)?.handleDocumentClosed();
+    }
+    if (this.lastEditor?.document.uri.toString() === key) {
       this.lastEditor = undefined;
     }
   }
@@ -243,7 +252,14 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
     }
 
     const uri = vscode.Uri.parse(session.uri);
-    const document = await vscode.workspace.openTextDocument(uri);
+    let document: vscode.TextDocument;
+    try {
+      document = await vscode.workspace.openTextDocument(uri);
+    } catch {
+      throw new TextLookupError(
+        "The checked document could not be opened — it may have been moved or deleted. Re-run the check.",
+      );
+    }
     const editor = await vscode.window.showTextDocument(document, {
       preserveFocus: true,
       preview: false,

@@ -33,6 +33,20 @@ describe("CheckSession.resolveRange", () => {
     expect(resolved).toEqual({ start: 4, end: 9 });
   });
 
+  it("stops trusting version equality after the document was closed", () => {
+    const session = fullDocSession();
+    session.handleDocumentClosed();
+
+    // Reopened document restarts version numbering: same version number, but
+    // the text changed on disk while it was closed.
+    const edited = "Hello! " + TEXT;
+    const resolved = session.resolveRange({ start: 4, end: 9 }, edited, 1);
+    expect(resolved).toEqual({ start: 11, end: 16 });
+
+    // Text equality still short-circuits when the content really is unchanged.
+    expect(session.resolveRange({ start: 4, end: 9 }, TEXT, 1)).toEqual({ start: 4, end: 9 });
+  });
+
   it("realigns ranges after an insertion earlier in the document", () => {
     const session = fullDocSession();
     const edited = "Hello! " + TEXT; // everything shifts by 7

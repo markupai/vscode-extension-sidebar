@@ -194,6 +194,77 @@ describe("SidebarBridge", () => {
     });
   });
 
+  describe("closed documents", () => {
+    it("reopens the document and highlights the card after it was closed", async () => {
+      const editor = makeEditor();
+      setActiveEditor(editor);
+      await bridge.handle("getContent", []);
+
+      bridge.handleDocumentClosed(editor.document.uri);
+      setActiveEditor(undefined);
+      (vscode.window as unknown as { visibleTextEditors: unknown[] }).visibleTextEditors = [];
+      stubEditorReopen(editor);
+
+      await bridge.handle("selectContent", [{ start: 4, end: 9 }]); // "quick"
+
+      expect(vscode.workspace.openTextDocument).toHaveBeenCalledOnce();
+      expect(vscode.window.showTextDocument).toHaveBeenCalledOnce();
+      const revealed = editor.revealRange.mock.calls[0][0] as vscode.Range;
+      expect(revealed.start.character).toBe(4);
+      expect(revealed.end.character).toBe(9);
+    });
+
+    it("does not trust version equality after the document was closed", async () => {
+      const editor = makeEditor(); // version 1 at check time
+      setActiveEditor(editor);
+      await bridge.handle("getContent", []);
+
+      bridge.handleDocumentClosed(editor.document.uri);
+
+      // Reopened document: version numbering restarted (coincidentally also
+      // 1), but the file changed on disk while it was closed.
+      const edited = "Hello! " + TEXT;
+      editor.document.getText = vi.fn(() => edited);
+      stubEditorReopen(editor);
+
+      await bridge.handle("selectContent", [{ start: 4, end: 9 }]); // "quick"
+
+      const revealed = editor.revealRange.mock.calls[0][0] as vscode.Range;
+      expect(revealed.start.character).toBe(11);
+      expect(revealed.end.character).toBe(16);
+    });
+
+    it("throws TextLookupError when the closed document cannot be reopened", async () => {
+      const editor = makeEditor();
+      setActiveEditor(editor);
+      await bridge.handle("getContent", []);
+
+      bridge.handleDocumentClosed(editor.document.uri);
+      vi.mocked(vscode.workspace.openTextDocument).mockRejectedValue(new Error("cannot open file"));
+
+      const error = await bridge
+        .handle("selectContent", [{ start: 4, end: 9 }])
+        .catch((e: unknown) => e);
+      expect(isTextLookupError(error)).toBe(true);
+      expect((error as Error).message).toContain("moved or deleted");
+    });
+
+    it("forgets the session when an untitled document closes", async () => {
+      const editor = makeEditor();
+      (editor.document.uri as { scheme: string }).scheme = "untitled";
+      setActiveEditor(editor);
+      await bridge.handle("getContent", []);
+
+      bridge.handleDocumentClosed(editor.document.uri);
+
+      const error = await bridge
+        .handle("selectContent", [{ start: 4, end: 9 }])
+        .catch((e: unknown) => e);
+      expect(isTextLookupError(error)).toBe(true);
+      expect((error as Error).message).toContain("No check has been run");
+    });
+  });
+
   describe("replaceContent", () => {
     it("applies the suggestion via a workspace edit", async () => {
       const editor = makeEditor();
