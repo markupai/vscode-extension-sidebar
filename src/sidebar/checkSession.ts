@@ -31,6 +31,7 @@ export interface SpanRange {
  */
 export class CheckSession {
   private alignmentCache: { version: number; map: Int32Array } | null = null;
+  private versionTrusted = true;
 
   constructor(
     /** URI (string form) of the checked document. */
@@ -47,6 +48,17 @@ export class CheckSession {
     /** Length of the content that was sent to the sidebar. */
     readonly checkedLength: number,
   ) {}
+
+  /**
+   * Mark the checked document as closed. A reopened document restarts its
+   * version numbering, so version equality can no longer prove the text is
+   * unchanged — from here on, only text comparison counts, and the
+   * per-version alignment cache is discarded.
+   */
+  handleDocumentClosed(): void {
+    this.versionTrusted = false;
+    this.alignmentCache = null;
+  }
 
   /** The original surface a sidebar-relative range refers to. */
   expectedText(range: SpanRange): string {
@@ -68,7 +80,10 @@ export class CheckSession {
     };
 
     // Tier 1 — document unchanged since the check.
-    if (currentVersion === this.snapshotVersion || currentText === this.snapshotText) {
+    if (
+      (this.versionTrusted && currentVersion === this.snapshotVersion) ||
+      currentText === this.snapshotText
+    ) {
       return absolute;
     }
 
