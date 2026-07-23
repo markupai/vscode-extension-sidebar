@@ -24,6 +24,7 @@ import {
   type RpcRequest,
   type SidebarBootstrap,
 } from "./rpc";
+import { SIDEBAR_AUTH_PROVIDER } from "../constants";
 import { themeKindToColorScheme } from "./theme";
 
 interface VsCodeApi {
@@ -99,8 +100,10 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
         integrationId: boot.integrationId,
         integrationVersion: boot.integrationVersion,
         // Popups cannot be created from a VS Code webview; the sidebar must
-        // use the backend-mediated OAuth flow with openAuthUrl below.
-        auth: { type: "mediation" },
+        // use the backend-mediated OAuth flow with openAuthUrl below. The
+        // provider is pinned to the registered Auth0 connection so it no
+        // longer derives from integrationId (which uses the analytics slug).
+        auth: { type: "mediation", provider: SIDEBAR_AUTH_PROVIDER },
         useCheckPreviewDialog: false,
         supportCheckSelection: true,
         hideBanner: false,
