@@ -4,6 +4,7 @@ import {
   AUTH_URLS,
   SIDEBAR_INTEGRATION_NAME,
   SIDEBAR_INTEGRATION_ID,
+  SIDEBAR_AUTH_PROVIDER,
 } from "../src/constants";
 
 describe("constants", () => {
@@ -38,9 +39,13 @@ describe("constants", () => {
   });
 
   describe("integration identity", () => {
-    it("matches the dedicated vscode-extension Auth0 integration", () => {
+    it("uses the markupai-prefixed slug for the integration id", () => {
       expect(SIDEBAR_INTEGRATION_NAME).toBe("vscode-extension");
-      expect(SIDEBAR_INTEGRATION_ID).toBe("vscode-extension");
+      expect(SIDEBAR_INTEGRATION_ID).toBe("markupai-vscode-sidebar");
+    });
+
+    it("pins the auth provider to the dedicated vscode-extension Auth0 integration", () => {
+      expect(SIDEBAR_AUTH_PROVIDER).toBe("vscode-extension");
     });
   });
 });
