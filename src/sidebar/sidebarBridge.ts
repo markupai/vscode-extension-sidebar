@@ -1,5 +1,10 @@
 import * as vscode from "vscode";
-import { MimeType, TextLookupError, type ContentInfo } from "@markupai/sidebar-adapter";
+import {
+  buildDocumentReference,
+  MimeType,
+  TextLookupError,
+  type ContentInfo,
+} from "@markupai/sidebar-adapter";
 import { CheckSession, CheckSessionStore, type SpanRange } from "./checkSession";
 import { SidebarRpcHandler } from "./sidebarViewProvider";
 import { isSupportedScheme } from "../utils";
@@ -131,7 +136,10 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
     const fileName = document.uri.path.split("/").pop() || document.uri.path;
     return {
       content,
-      documentReference: document.uri.toString(),
+      // The shared cross-product format is <prefix>:<id>; the uri is the
+      // stable identity of a document in VS Code, and a selection reuses the
+      // whole document's reference so both spell the same document.
+      documentReference: buildDocumentReference("vscode", document.uri.toString()),
       documentName: fileName,
       mimeType: mimeTypeForFileName(fileName),
     };

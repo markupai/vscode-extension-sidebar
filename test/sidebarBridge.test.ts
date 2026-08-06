@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as vscode from "vscode";
-import { isTextLookupError } from "@markupai/sidebar-adapter";
+import { isDocumentReference, isTextLookupError } from "@markupai/sidebar-adapter";
 import { SidebarBridge } from "../src/sidebar/sidebarBridge";
 
 const TEXT = "The quick brown fox jumps over the lazy dog.";
@@ -81,7 +81,8 @@ describe("SidebarBridge", () => {
       expect(info.content).toBe(TEXT);
       expect(info.documentName).toBe("doc.md");
       expect(info.mimeType).toBe("text/markdown");
-      expect(info.documentReference).toContain("doc.md");
+      expect(info.documentReference).toBe(`vscode:${editor.document.uri.toString()}`);
+      expect(isDocumentReference(info.documentReference)).toBe(true);
     });
 
     it("maps dita and html extensions to their mime types", async () => {
@@ -130,6 +131,23 @@ describe("SidebarBridge", () => {
       const revealed = editor.revealRange.mock.calls[0][0] as vscode.Range;
       expect(revealed.start.character).toBe(16);
       expect(revealed.end.character).toBe(19);
+    });
+
+    it("uses the same document reference for the selection as for the whole document", async () => {
+      const editor = makeEditor();
+      setActiveEditor(editor);
+      const full = (await bridge.handle("getContent", [])) as { documentReference: string };
+
+      editor.selection = {
+        isEmpty: false,
+        start: new vscode.Position(0, 10),
+        end: new vscode.Position(0, 19),
+      };
+      const selected = (await bridge.handle("getSelectedContent", [])) as {
+        documentReference: string;
+      };
+
+      expect(selected.documentReference).toBe(full.documentReference);
     });
 
     it("throws when the selection is empty", async () => {
