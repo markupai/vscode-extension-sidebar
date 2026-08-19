@@ -471,4 +471,81 @@ describe("SidebarBridge", () => {
 
     await expect(bridge.handle("getContent", [])).rejects.toThrow("Open a document");
   });
+
+  describe("multi-document", () => {
+    it("getActiveDocumentReference reflects the resolved editor, or null", async () => {
+      expect(await bridge.handle("getActiveDocumentReference", [])).toBeNull();
+
+      const editor = makeEditor();
+      setActiveEditor(editor);
+      expect(await bridge.handle("getActiveDocumentReference", [])).toBe(
+        `vscode:${editor.document.uri.toString()}`,
+      );
+    });
+
+    it("fires onActiveDocumentChanged when the resolved document changes, deduped", () => {
+      const seen: (string | null)[] = [];
+      bridge.onActiveDocumentChanged((ref) => seen.push(ref));
+
+      const editorA = makeEditor(TEXT, "/a.md");
+      setActiveEditor(editorA);
+      bridge.trackEditor(editorA as unknown as vscode.TextEditor);
+      bridge.trackEditor(editorA as unknown as vscode.TextEditor); // same doc, no repeat
+
+      const editorB = makeEditor(TEXT, "/b.md");
+      setActiveEditor(editorB);
+      bridge.trackEditor(editorB as unknown as vscode.TextEditor);
+
+      expect(seen).toEqual([
+        `vscode:${editorA.document.uri.toString()}`,
+        `vscode:${editorB.document.uri.toString()}`,
+      ]);
+    });
+
+    it("fires onActiveDocumentChanged with null when the active document closes", () => {
+      const editor = makeEditor();
+      setActiveEditor(editor);
+      bridge.trackEditor(editor as unknown as vscode.TextEditor);
+
+      const seen: (string | null)[] = [];
+      bridge.onActiveDocumentChanged((ref) => seen.push(ref));
+
+      setActiveEditor(undefined);
+      (vscode.window as unknown as { visibleTextEditors: unknown[] }).visibleTextEditors = [];
+      bridge.handleDocumentClosed(editor.document.uri);
+
+      expect(seen).toEqual([null]);
+    });
+
+    it("selectContent/replaceContent target the document named by documentReference, not the latest check", async () => {
+      const editorA = makeEditor(TEXT, "/a.md");
+      setActiveEditor(editorA);
+      stubEditorReopen(editorA);
+      const infoA = (await bridge.handle("getContent", [])) as { documentReference: string };
+
+      const editorB = makeEditor(TEXT, "/b.md");
+      setActiveEditor(editorB);
+      stubEditorReopen(editorB);
+      await bridge.handle("getContent", []); // now the latest-checked session
+
+      stubEditorReopen(editorA);
+      await bridge.handle("selectContent", [{ start: 4, end: 9 }, infoA.documentReference]); // "quick"
+
+      expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+        editorA.document,
+        expect.anything(),
+      );
+      const revealed = editorA.revealRange.mock.calls[0][0] as vscode.Range;
+      expect(revealed.start.character).toBe(4);
+      expect(revealed.end.character).toBe(9);
+    });
+
+    it("throws TextLookupError when documentReference names a document with no check", async () => {
+      const error = await bridge
+        .handle("selectContent", [{ start: 0, end: 4 }, "vscode:file:///never-checked.md"])
+        .catch((e: unknown) => e);
+      expect(isTextLookupError(error)).toBe(true);
+      expect((error as Error).message).toContain("No check has been run for that document");
+    });
+  });
 });

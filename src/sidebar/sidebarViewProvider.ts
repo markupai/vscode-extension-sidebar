@@ -8,8 +8,10 @@ import {
 import { getEnvironment } from "../utils";
 import {
   RPC_ERROR,
+  RPC_NOTIFY,
   RPC_RESULT,
   isRpcRequest,
+  type RpcNotify,
   type RpcRequest,
   type SidebarBootstrap,
 } from "../webview/rpc";
@@ -31,6 +33,8 @@ export interface SidebarRpcHandler {
 export class SidebarViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "markupai.sidebar";
 
+  private webview: vscode.Webview | undefined;
+
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly extensionVersion: string,
@@ -39,6 +43,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     const webview = webviewView.webview;
+    this.webview = webview;
     webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "out", "webview")],
@@ -49,8 +54,30 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         void this.dispatch(webview, message);
       }
     });
+    webviewView.onDidDispose(() => {
+      if (this.webview === webview) {
+        this.webview = undefined;
+      }
+    });
 
     webview.html = this.buildHtml(webview);
+  }
+
+  /**
+   * Push the active document to the sidebar (multi-document mode). A no-op
+   * before the webview has resolved — the sidebar picks up the initial
+   * document itself via `initialActiveDocumentReference` at init instead.
+   */
+  notifyActiveDocumentChanged(documentReference: string | null): void {
+    if (!this.webview) {
+      return;
+    }
+    const notify: RpcNotify = {
+      type: RPC_NOTIFY,
+      method: "activeDocumentChanged",
+      args: [documentReference],
+    };
+    void this.webview.postMessage(notify);
   }
 
   private async dispatch(webview: vscode.Webview, request: RpcRequest): Promise<void> {

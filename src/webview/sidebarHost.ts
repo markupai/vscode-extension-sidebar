@@ -7,6 +7,7 @@
  *   sidebar iframe  ⇄  this script (adapter IPC)  ⇄  extension host (RPC)
  */
 import {
+  assertSidebarHostAdapter,
   createSidebarHost,
   ensureSidebarHostShell,
   sidebarPostMessageTargetOrigin,
@@ -16,11 +17,14 @@ import {
   type ContentReplacement,
   type PluginInterface,
   type SidebarConfig,
+  type SidebarHost,
 } from "@markupai/sidebar-adapter";
 import {
   RPC_REQUEST,
   isRpcResponse,
+  isRpcNotify,
   RPC_ERROR,
+  type RpcNotify,
   type RpcRequest,
   type SidebarBootstrap,
 } from "./rpc";
@@ -52,14 +56,21 @@ interface Pending {
 let nextRpcId = 1;
 const pending = new Map<number, Pending>();
 
+/** Set once the sidebar host mounts; used to relay extension-host push notifications. */
+let sidebarHost: SidebarHost | undefined;
+
 globalThis.addEventListener("message", (event: MessageEvent<unknown>) => {
-  // RPC responses come from the extension host, delivered with this
-  // webview's own origin. The sidebar iframe also posts messages to this
-  // window (adapter IPC, handled elsewhere) — never parse those as RPC.
+  // Messages from the extension host are delivered with this webview's own
+  // origin. The sidebar iframe also posts messages to this window (adapter
+  // IPC, handled elsewhere) — never parse those as RPC.
   if (event.origin !== globalThis.location.origin) {
     return;
   }
   const data = event.data;
+  if (isRpcNotify(data)) {
+    handleNotify(data);
+    return;
+  }
   if (!isRpcResponse(data)) {
     return;
   }
@@ -74,6 +85,15 @@ globalThis.addEventListener("message", (event: MessageEvent<unknown>) => {
     entry.resolve(data.result);
   }
 });
+
+/** Push notifications from the extension host (multi-document mode). */
+function handleNotify(notify: RpcNotify): void {
+  if (notify.method !== "activeDocumentChanged" || !sidebarHost) {
+    return;
+  }
+  assertSidebarHostAdapter(sidebarHost);
+  void sidebarHost.adapter.notifyActiveDocumentChanged(notify.args[0] as string | null);
+}
 
 function rpc<T>(method: string, args: unknown[] = []): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -94,8 +114,12 @@ async function rpcVoid(method: string, args: unknown[] = []): Promise<void> {
 
 function buildPlugin(boot: SidebarBootstrap): PluginInterface {
   return {
-    getInitConfig: (): Promise<SidebarConfig> =>
-      Promise.resolve({
+    getInitConfig: async (): Promise<SidebarConfig> => {
+      // One-time snapshot at init — the sidebar's own multi-document doc
+      // recommends this over waiting for a passive getContent() detection.
+      // Later switches still go through notifyActiveDocumentChanged.
+      const initialActiveDocumentReference = await rpc<string | null>("getActiveDocumentReference");
+      return {
         integrationName: boot.integrationName,
         integrationId: boot.integrationId,
         integrationVersion: boot.integrationVersion,
@@ -107,13 +131,19 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
         useCheckPreviewDialog: false,
         supportCheckSelection: true,
         hideBanner: false,
-      }),
+        // VS Code is a tabbed editor — retain each document's check results
+        // separately as the user switches between open files.
+        multiDocument: true,
+        initialActiveDocumentReference,
+      };
+    },
 
     getContent: () => rpc<ContentInfo>("getContent"),
     getSelectedContent: () => rpc<ContentInfo>("getSelectedContent"),
-    selectContent: (range: ContentRange) => rpcVoid("selectContent", [range]),
-    replaceContent: (suggestion: string, range: ContentRange) =>
-      rpcVoid("replaceContent", [suggestion, range]),
+    selectContent: (range: ContentRange, documentReference?: string | null) =>
+      rpcVoid("selectContent", [range, documentReference ?? null]),
+    replaceContent: (suggestion: string, range: ContentRange, documentReference?: string | null) =>
+      rpcVoid("replaceContent", [suggestion, range, documentReference ?? null]),
     replaceMultipleContents: (replacements: ContentReplacement[]) =>
       rpcVoid("replaceMultipleContents", [replacements]),
 
@@ -188,6 +218,7 @@ function mount(): void {
       targetOrigin: sidebarPostMessageTargetOrigin(bootstrap.sidebarUrl),
     },
   });
+  sidebarHost = host;
 
   syncVsCodeTheme(host.iframe);
 }

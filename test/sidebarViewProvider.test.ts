@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import * as vscode from "vscode";
 import { TextLookupError } from "@markupai/sidebar-adapter";
 import { SidebarViewProvider, type SidebarRpcHandler } from "../src/sidebar/sidebarViewProvider";
-import { RPC_ERROR, RPC_REQUEST, RPC_RESULT } from "../src/webview/rpc";
+import { RPC_ERROR, RPC_NOTIFY, RPC_REQUEST, RPC_RESULT } from "../src/webview/rpc";
 
 function createWebviewView() {
   let messageListener: ((message: unknown) => void) | undefined;
@@ -18,7 +18,10 @@ function createWebviewView() {
     asWebviewUri: vi.fn((uri: vscode.Uri) => uri),
   };
   return {
-    webviewView: { webview } as unknown as vscode.WebviewView,
+    webviewView: {
+      webview,
+      onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as vscode.WebviewView,
     webview,
     sendMessage: (message: unknown) => {
       if (!messageListener) {
@@ -119,5 +122,40 @@ describe("SidebarViewProvider", () => {
 
     expect(handler.handle).not.toHaveBeenCalled();
     expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  describe("notifyActiveDocumentChanged", () => {
+    it("posts a notify message once the view has resolved", () => {
+      const { webviewView, webview } = createWebviewView();
+      provider.resolveWebviewView(webviewView);
+
+      provider.notifyActiveDocumentChanged("vscode:file:///doc.md");
+
+      expect(webview.postMessage).toHaveBeenCalledWith({
+        type: RPC_NOTIFY,
+        method: "activeDocumentChanged",
+        args: ["vscode:file:///doc.md"],
+      });
+    });
+
+    it("is a no-op before the view has resolved", () => {
+      expect(() => {
+        provider.notifyActiveDocumentChanged(null);
+      }).not.toThrow();
+    });
+
+    it("stops posting after the view is disposed", () => {
+      const { webviewView, webview } = createWebviewView();
+      const onDidDispose = webviewView.onDidDispose as unknown as Mock<
+        (listener: () => void) => { dispose: () => void }
+      >;
+      provider.resolveWebviewView(webviewView);
+      const disposeListener = onDidDispose.mock.calls[0][0];
+
+      disposeListener();
+      provider.notifyActiveDocumentChanged("vscode:file:///doc.md");
+
+      expect(webview.postMessage).not.toHaveBeenCalled();
+    });
   });
 });

@@ -14,6 +14,16 @@ interface ContentReplacementArg {
   range: SpanRange;
 }
 
+/** Prefix `getContent`/`getActiveDocumentReference` compose document references with. */
+const DOCUMENT_REFERENCE_PREFIX = "vscode:";
+
+/** Recover the session-store key (document uri string) from a sidebar-supplied documentReference. */
+function uriFromDocumentReference(documentReference: string): string {
+  return documentReference.startsWith(DOCUMENT_REFERENCE_PREFIX)
+    ? documentReference.slice(DOCUMENT_REFERENCE_PREFIX.length)
+    : documentReference;
+}
+
 /**
  * Extension-host implementation of the sidebar's PluginInterface.
  *
@@ -28,6 +38,12 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
   private readonly sessions = new CheckSessionStore();
   private lastEditor: vscode.TextEditor | undefined;
   private readonly highlight: vscode.TextEditorDecorationType;
+
+  // Multi-document mode: the sidebar needs to be told when the host's active
+  // document changes (see notifyActiveDocumentChanged in the adapter docs).
+  private readonly activeDocumentChangedEmitter = new vscode.EventEmitter<string | null>();
+  readonly onActiveDocumentChanged = this.activeDocumentChangedEmitter.event;
+  private lastNotifiedDocumentReference: string | null = null;
 
   constructor() {
     this.highlight = vscode.window.createTextEditorDecorationType({
@@ -44,6 +60,7 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
     if (editor && isSupportedScheme(editor.document.uri.scheme)) {
       this.lastEditor = editor;
     }
+    this.emitActiveDocumentChangedIfNeeded();
   }
 
   /** Update state for a closed document. */
@@ -61,6 +78,21 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
     if (this.lastEditor?.document.uri.toString() === key) {
       this.lastEditor = undefined;
     }
+    this.emitActiveDocumentChangedIfNeeded();
+  }
+
+  /** The sidebar's documentReference for whatever document is currently active, or null. */
+  activeDocumentReference(): string | null {
+    const editor = this.resolveEditor();
+    return editor ? buildDocumentReference("vscode", editor.document.uri.toString()) : null;
+  }
+
+  private emitActiveDocumentChangedIfNeeded(): void {
+    const reference = this.activeDocumentReference();
+    if (reference !== this.lastNotifiedDocumentReference) {
+      this.lastNotifiedDocumentReference = reference;
+      this.activeDocumentChangedEmitter.fire(reference);
+    }
   }
 
   async handle(method: string, args: unknown[]): Promise<unknown> {
@@ -69,10 +101,16 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
         return this.getContent(false);
       case "getSelectedContent":
         return this.getContent(true);
+      case "getActiveDocumentReference":
+        return this.activeDocumentReference();
       case "selectContent":
-        return this.selectContent(args[0] as SpanRange);
+        return this.selectContent(args[0] as SpanRange, args[1] as string | null | undefined);
       case "replaceContent":
-        return this.replaceContent(args[0] as string, args[1] as SpanRange);
+        return this.replaceContent(
+          args[0] as string,
+          args[1] as SpanRange,
+          args[2] as string | null | undefined,
+        );
       case "replaceMultipleContents":
         return this.replaceMultipleContents(args[0] as ContentReplacementArg[]);
       case "openAuthUrl": {
@@ -164,8 +202,8 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
   // Highlight (card click)
   // ==========================================================================
 
-  private async selectContent(range: SpanRange): Promise<void> {
-    const { editor, span } = await this.resolveSessionRange(range);
+  private async selectContent(range: SpanRange, documentReference?: string | null): Promise<void> {
+    const { editor, span } = await this.resolveSessionRange(range, documentReference);
 
     const start = editor.document.positionAt(span.start);
     const end = editor.document.positionAt(span.end);
@@ -180,8 +218,12 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
   // Replacement
   // ==========================================================================
 
-  private async replaceContent(suggestion: string, range: SpanRange): Promise<void> {
-    const { editor, span } = await this.resolveSessionRange(range);
+  private async replaceContent(
+    suggestion: string,
+    range: SpanRange,
+    documentReference?: string | null,
+  ): Promise<void> {
+    const { editor, span } = await this.resolveSessionRange(range, documentReference);
 
     const edit = new vscode.WorkspaceEdit();
     edit.replace(
@@ -253,10 +295,24 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
   // Session helpers
   // ==========================================================================
 
-  private async requireSession(): Promise<{ session: CheckSession; editor: vscode.TextEditor }> {
-    const session = this.sessions.getLatest();
+  /**
+   * Resolve the session to act on. `documentReference` (omitted/null means
+   * "whichever document was most recently checked") lets the sidebar target
+   * a document that isn't the one currently on screen — see the adapter's
+   * multi-document docs for `selectContent`/`replaceContent`.
+   */
+  private async requireSession(
+    documentReference?: string | null,
+  ): Promise<{ session: CheckSession; editor: vscode.TextEditor }> {
+    const session = documentReference
+      ? this.sessions.get(uriFromDocumentReference(documentReference))
+      : this.sessions.getLatest();
     if (!session) {
-      throw new TextLookupError("No check has been run yet.");
+      throw new TextLookupError(
+        documentReference
+          ? "No check has been run for that document."
+          : "No check has been run yet.",
+      );
     }
 
     const uri = vscode.Uri.parse(session.uri);
@@ -277,8 +333,9 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
 
   private async resolveSessionRange(
     range: SpanRange,
+    documentReference?: string | null,
   ): Promise<{ session: CheckSession; editor: vscode.TextEditor; span: SpanRange }> {
-    const { session, editor } = await this.requireSession();
+    const { session, editor } = await this.requireSession(documentReference);
     const span = session.resolveRange(range, editor.document.getText(), editor.document.version);
     if (!span) {
       throw new TextLookupError(
@@ -291,6 +348,7 @@ export class SidebarBridge implements SidebarRpcHandler, vscode.Disposable {
   dispose(): void {
     this.highlight.dispose();
     this.sessions.clear();
+    this.activeDocumentChangedEmitter.dispose();
   }
 }
 
