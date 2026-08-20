@@ -15,6 +15,7 @@ This extension isn't a stand-alone authoring tool — it works only with the Mar
 - **Sidebar panel** — opens from the Markup AI icon in the activity bar
 - **Check the active document or a selection** — run a check from the panel
 - **In-editor highlighting** — clicking an issue card reveals and highlights the corresponding text in the editor
+- **Multi-document support** — switch between open files and the sidebar keeps each document's check results separate, restoring them when you switch back
 - **Self-contained sign-in** — sign in, sign out, and pick a style guide from inside the panel
 
 ## Getting Started
