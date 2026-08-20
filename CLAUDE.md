@@ -90,3 +90,16 @@ host, and the webview IIFE script. The webview script runs in the DOM, not the e
   (e.g. Cursor) lag behind upstream API versions, and this extension is meant to keep working
   on them — bumping the minimum engine version can silently drop fork compatibility. Only
   raise it when the extension actually needs a newer API, and call that out explicitly.
+
+## Releasing
+
+Publishing is CI-only (`.github/workflows/release.yml`), never from a developer machine.
+Merging a PR to `main` does **not** publish anything — a release is a separate, explicit step:
+
+1. Bump `version` in `package.json` (and `package-lock.json`) on `main`, following
+   [Semantic Versioning](https://semver.org/).
+2. Tag that commit `vX.Y.Z` and push the tag (or trigger the Release workflow manually via
+   `workflow_dispatch`).
+3. CI type-checks, lints, and tests the code, packages the `.vsix` once, then publishes the
+   identical artifact to both the VS Code Marketplace and Open VSX, and creates a GitHub
+   Release with the `.vsix` attached.
