@@ -66,4 +66,5 @@ export interface SidebarBootstrap {
   integrationName: string;
   integrationId: string;
   integrationVersion: string;
+  hostAppVersion: string;
 }
