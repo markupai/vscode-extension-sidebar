@@ -40,3 +40,19 @@ Open a supported document (Markdown, HTML, DITA/XML, plain text), then run a che
 ## Support
 
 For issues, feature requests, or questions, please visit the [Markup AI documentation](https://docs.markup.ai) or contact support.
+
+## Releasing (maintainers)
+
+Publishing is CI-only, never from a developer machine. Merging a PR to `main` does **not**
+publish anything by itself — a release is a separate, explicit step:
+
+1. Bump `version` in `package.json` (and `package-lock.json`) on `main`, following
+   [Semantic Versioning](https://semver.org/).
+2. Tag that commit `vX.Y.Z` and push the tag (or trigger the
+   [Release workflow](.github/workflows/release.yml) manually via `workflow_dispatch`).
+3. CI type-checks, lints, and tests the code, packages the `.vsix` once, then publishes
+   the identical artifact to both the VS Code Marketplace and Open VSX, and creates a
+   GitHub Release with the `.vsix` attached.
+
+See `.github/workflows/release.yml` for the full pipeline, including the OIDC-based
+Marketplace auth setup.
