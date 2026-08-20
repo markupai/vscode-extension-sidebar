@@ -87,7 +87,7 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "eslint": "^10.8.1",
-    "ovsx": "^1.0.2",
+    "ovsx": "^1.1.1",
     "prettier": "^3.9.4",
     "prettier-plugin-packagejson": "^3.0.2",
     "typescript": "^6.0.3",
