@@ -74,7 +74,7 @@
     "onStartupFinished"
   ],
   "dependencies": {
-    "@markupai/format-offset-mapper": "^1.1.9",
+    "@markupai/format-offset-mapper": "^1.2.0",
     "@markupai/sidebar-adapter": "^1.5.3"
   },
   "devDependencies": {
