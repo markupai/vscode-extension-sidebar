@@ -85,3 +85,8 @@ host, and the webview IIFE script. The webview script runs in the DOM, not the e
 - The Sonar project for this repo is `markupai_vscode-extension-sidebar`
   (`sonar-project.properties`). `src/extension.ts` and `src/webview/sidebarHost.ts` are
   coverage-excluded — they're activation/DOM glue that isn't meaningfully unit-tested.
+- **`engines.vscode` and `@types/vscode` are pinned intentionally low** (currently
+  `^1.105.1`) and should not be bumped as part of routine dependency updates. VS Code forks
+  (e.g. Cursor) lag behind upstream API versions, and this extension is meant to keep working
+  on them — bumping the minimum engine version can silently drop fork compatibility. Only
+  raise it when the extension actually needs a newer API, and call that out explicitly.

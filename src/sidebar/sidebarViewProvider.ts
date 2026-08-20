@@ -22,7 +22,7 @@ import {
  * host against the tracked active document.
  */
 export interface SidebarRpcHandler {
-  handle(method: string, args: unknown[]): Promise<unknown>;
+  handle: (method: string, args: unknown[]) => Promise<unknown>;
 }
 
 /**
