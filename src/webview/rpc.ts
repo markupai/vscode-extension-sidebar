@@ -8,6 +8,7 @@
 export const RPC_REQUEST = "markupai.rpc";
 export const RPC_RESULT = "markupai.rpcResult";
 export const RPC_ERROR = "markupai.rpcError";
+export const RPC_NOTIFY = "markupai.rpcNotify";
 
 export interface RpcRequest {
   type: typeof RPC_REQUEST;
@@ -36,12 +37,23 @@ export interface RpcError {
 
 export type RpcResponse = RpcResult | RpcError;
 
+/** Extension host → webview push message (no request/response id — the host initiates). */
+export interface RpcNotify {
+  type: typeof RPC_NOTIFY;
+  method: string;
+  args: unknown[];
+}
+
 export function isRpcRequest(value: unknown): value is RpcRequest {
   return isRecord(value) && value.type === RPC_REQUEST;
 }
 
 export function isRpcResponse(value: unknown): value is RpcResponse {
   return isRecord(value) && (value.type === RPC_RESULT || value.type === RPC_ERROR);
+}
+
+export function isRpcNotify(value: unknown): value is RpcNotify {
+  return isRecord(value) && value.type === RPC_NOTIFY;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

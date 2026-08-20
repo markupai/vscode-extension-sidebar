@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   isRpcRequest,
   isRpcResponse,
+  isRpcNotify,
   RPC_ERROR,
+  RPC_NOTIFY,
   RPC_REQUEST,
   RPC_RESULT,
 } from "../src/webview/rpc";
@@ -26,5 +28,16 @@ describe("rpc message guards", () => {
   it("rejects non-response values", () => {
     expect(isRpcResponse(undefined)).toBe(false);
     expect(isRpcResponse({ type: RPC_REQUEST, id: 1 })).toBe(false);
+  });
+
+  it("accepts well-formed notify messages", () => {
+    expect(isRpcNotify({ type: RPC_NOTIFY, method: "activeDocumentChanged", args: [null] })).toBe(
+      true,
+    );
+  });
+
+  it("rejects non-notify values", () => {
+    expect(isRpcNotify(null)).toBe(false);
+    expect(isRpcNotify({ type: RPC_RESULT, id: 1, result: "x" })).toBe(false);
   });
 });
