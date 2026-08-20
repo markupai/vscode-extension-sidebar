@@ -108,6 +108,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       integrationName: SIDEBAR_INTEGRATION_NAME,
       integrationId: SIDEBAR_INTEGRATION_ID,
       integrationVersion: this.extensionVersion,
+      hostAppVersion: vscode.version,
     };
 
     const csp = [

@@ -123,6 +123,7 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
         integrationName: boot.integrationName,
         integrationId: boot.integrationId,
         integrationVersion: boot.integrationVersion,
+        hostAppVersion: boot.hostAppVersion,
         // Popups cannot be created from a VS Code webview; the sidebar must
         // use the backend-mediated OAuth flow with openAuthUrl below. The
         // provider is pinned to the registered Auth0 connection so it no
