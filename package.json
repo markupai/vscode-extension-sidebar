@@ -74,8 +74,8 @@
     "onStartupFinished"
   ],
   "dependencies": {
-    "@markupai/format-offset-mapper": "^1.1.9",
-    "@markupai/sidebar-adapter": "^1.5.3"
+    "@markupai/format-offset-mapper": "^1.2.0",
+    "@markupai/sidebar-adapter": "^2.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
