@@ -129,7 +129,6 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
         // provider is pinned to the registered Auth0 connection so it no
         // longer derives from integrationId (which uses the analytics slug).
         auth: { type: "mediation", provider: SIDEBAR_AUTH_PROVIDER },
-        useCheckPreviewDialog: false,
         supportCheckSelection: true,
         hideBanner: false,
         // VS Code is a tabbed editor — retain each document's check results
@@ -157,11 +156,6 @@ function buildPlugin(boot: SidebarBootstrap): PluginInterface {
     // off the vscode-webview:// origin — so the app delegates the write to
     // the extension host (vscode.env.clipboard).
     copyToClipboard: (text: string) => rpcVoid("copyToClipboard", [text]),
-
-    // VS Code has no host-rendered dialog surface; the sidebar is configured
-    // with useCheckPreviewDialog: false so these are never exercised.
-    showDialog: () => Promise.reject(new Error("Dialogs are not supported in VS Code")),
-    closeDialog: () => Promise.reject(new Error("Dialogs are not supported in VS Code")),
   };
 }
 
