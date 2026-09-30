@@ -1,0 +1,115 @@
+name: Release SBOM
+
+# Generates a CycloneDX and SPDX SBOM for a released .vsix, stamped with the
+# version, commit and the .vsix sha256, attested, copied to the SBOM bucket
+# and attached to the release (SRE-5175). Called by release.yml after the
+# GitHub Release exists, or dispatched with a version to backfill one.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version without the v prefix, e.g. 1.0.3
+        required: true
+        type: string
+      backfill:
+        description: Mark the SBOM as generated after the release rather than in it
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to backfill, without the v prefix, e.g. 1.0.3
+        required: true
+        type: string
+      backfill:
+        description: Mark the SBOM as generated after the release rather than in it
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # release assets
+      id-token: write # attestation and AWS OIDC
+      attestations: write
+    steps:
+      # The version reaches `git checkout` and the release lookup, so pin its
+      # shape first.
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::version '${VERSION}' must be X.Y.Z, without the v prefix"
+            exit 1
+          }
+
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ inputs.version }}
+
+      # A backfill runs from main, long after the tag. Stamp the tag's commit,
+      # not github.sha.
+      - name: Resolve the release commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # The .vsix on the release is the file release.yml published to both
+      # marketplaces, so its sha256 is what users install.
+      - name: Download the released .vsix
+        id: vsix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release download "v${VERSION}" --pattern '*.vsix' --dir "${RUNNER_TEMP}/vsix"
+          files=("${RUNNER_TEMP}"/vsix/*.vsix)
+          [ ${#files[@]} -eq 1 ] || { echo "::error::expected one .vsix on v${VERSION}, found ${#files[@]}"; exit 1; }
+          echo "path=${files[0]}" >> "$GITHUB_OUTPUT"
+
+      # esbuild bundles the prod dependencies into out/, so the lockfile is the
+      # only place they're listed.
+      - name: Extension SBOM
+        run: |
+          npx -y @cyclonedx/cyclonedx-npm@2.1.0 --omit dev --package-lock-only \
+            --output-format JSON --output-file "${RUNNER_TEMP}/extension.cdx.json"
+
+      - name: Stamp SBOM
+        id: stamp
+        uses: markupai/gha-sbom/stamp@a83442e1e76babc7fe2a82b675b3c93aa81bb411 # v1.2.1
+        with:
+          sbom: ${{ runner.temp }}/extension.cdx.json
+          kind: source
+          product: integrations
+          component: vscode-extension-sidebar
+          version: v${{ inputs.version }}
+          commit: ${{ steps.commit.outputs.sha }}
+          subject-path: ${{ steps.vsix.outputs.path }}
+          backfill: ${{ inputs.backfill }}
+          root-name: vscode-extension-sidebar
+          min-components: "2"
+
+      - name: Publish SBOM
+        uses: markupai/gha-sbom/publish@a83442e1e76babc7fe2a82b675b3c93aa81bb411 # v1.2.1
+        with:
+          cdx: ${{ steps.stamp.outputs.cdx }}
+          spdx: ${{ steps.stamp.outputs.spdx }}
+          key: ${{ steps.stamp.outputs.key }}
+          component: vscode-extension-sidebar
+          subject-path: ${{ steps.vsix.outputs.path }}
+          bucket: ${{ vars.SBOM_BUCKET }}
+          role-arn: ${{ vars.SBOM_ROLE_ARN }}
+          release-tag: v${{ inputs.version }}
