@@ -38,6 +38,8 @@ jobs:
     # the entity the Entra federated credential is bound to — the OIDC subject is
     # `repo:markupai/vscode-extension-sidebar:environment:release`. Do not remove.
     environment: release
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     env:
       # Mapped here so the Open VSX step can be skipped when the token is absent
       # (secrets cannot be referenced directly in step `if:` conditions).
@@ -129,3 +131,16 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           make_latest: true
+
+  # After the GitHub Release exists, since the SBOM job reads the .vsix from it
+  # and attaches its files there. The publish is already done, so an SBOM
+  # failure never holds up a release.
+  sbom:
+    needs: publish
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/sbom-release.yml
+    with:
+      version: ${{ needs.publish.outputs.version }}
