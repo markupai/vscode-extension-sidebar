@@ -89,7 +89,7 @@ jobs:
 
       - name: Stamp SBOM
         id: stamp
-        uses: markupai/gha-sbom/stamp@a83442e1e76babc7fe2a82b675b3c93aa81bb411 # v1.2.1
+        uses: markupai/gha-sbom/stamp@7f4f4df3bcbdd6d0379b09b1f234662025b8c11e # v1.2.2
         with:
           sbom: ${{ runner.temp }}/extension.cdx.json
           kind: source
