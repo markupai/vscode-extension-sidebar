@@ -89,7 +89,7 @@ jobs:
 
       - name: Stamp SBOM
         id: stamp
-        uses: markupai/gha-sbom/stamp@a83442e1e76babc7fe2a82b675b3c93aa81bb411 # v1.2.1
+        uses: markupai/gha-sbom/stamp@be2b3dde8c43100fe26964aa5a87456b5d9a637f # v1.2.3
         with:
           sbom: ${{ runner.temp }}/extension.cdx.json
           kind: source
@@ -103,7 +103,7 @@ jobs:
           min-components: "2"
 
       - name: Publish SBOM
-        uses: markupai/gha-sbom/publish@a83442e1e76babc7fe2a82b675b3c93aa81bb411 # v1.2.1
+        uses: markupai/gha-sbom/publish@be2b3dde8c43100fe26964aa5a87456b5d9a637f # v1.2.3
         with:
           cdx: ${{ steps.stamp.outputs.cdx }}
           spdx: ${{ steps.stamp.outputs.spdx }}
